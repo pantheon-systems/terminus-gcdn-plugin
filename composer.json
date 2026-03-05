@@ -1,0 +1,22 @@
+{
+    "name": "pantheon-systems/terminus-gcdn-plugin",
+    "description": "Terminus plugin for GCDN upgrade management",
+    "type": "terminus-plugin",
+    "license": "MIT",
+    "autoload": {
+        "psr-4": {
+            "Pantheon\\TerminusGCDN\\": "src"
+        }
+    },
+    "require": {
+        "php": ">=8.2"
+    },
+    "require-dev": {
+        "pantheon-systems/terminus": "^4"
+    },
+    "extra": {
+        "terminus": {
+            "compatible-version": "^3 || ^4"
+        }
+    }
+}

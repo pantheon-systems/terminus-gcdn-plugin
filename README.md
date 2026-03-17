@@ -54,3 +54,7 @@ After enabling the GCDN upgrade, you will need to re-add and verify your custom 
 ## Help
 
 Run `terminus help gcdn:upgrade` for help.
+
+## TODO
+
+Add this to packagist. 

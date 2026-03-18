@@ -39,7 +39,7 @@ class UpgradeCommand extends TerminusCommand implements SiteAwareInterface, Requ
 
         $response = $this->request()->request($url, [
             'method' => 'POST',
-            'json' => new \stdClass(),
+            'json' => ['environments' => ['dev', 'test', 'live']],
         ]);
 
         if ($response->isError()) {

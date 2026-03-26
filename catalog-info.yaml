@@ -1,0 +1,10 @@
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: terminus-gcdn-plugin
+  description: Terminus plugin for upgrading sites to GCDN with bot protection
+spec:
+  type: library
+  lifecycle: production
+  owner: edge-routing

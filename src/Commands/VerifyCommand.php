@@ -12,12 +12,12 @@ use Pantheon\Terminus\Request\RequestAwareTrait;
 /**
  * Class VerifyCommand.
  *
- * Verifies domain ownership for Cloudflare-migrated sites by triggering
- * verification and displaying the 2 TXT records required by Cloudflare:
+ * Verifies domain ownership for new-gcdn migrated sites by triggering
+ * verification and displaying the 2 TXT records required for new-gcdn:
  * one for domain ownership and one for certificate validation.
  *
  * Based on Terminus core domain:verify by Conor Bauer, modified for
- * Cloudflare-specific TXT record format.
+ * new-gcdn specific TXT record format.
  *
  * @package Pantheon\TerminusGCDN\Commands
  */
@@ -27,9 +27,9 @@ class VerifyCommand extends TerminusCommand implements SiteAwareInterface, Reque
     use RequestAwareTrait;
 
     /**
-     * Verifies ownership of a domain on a Cloudflare-migrated site.
+     * Verifies ownership of a domain on a new-gcdn migrated site.
      *
-     * Triggers DNS-01 verification and displays the 2 Cloudflare TXT records
+     * Triggers DNS-01 verification and displays the 2 new-gcdn TXT records
      * (ownership + certificate) if verification is not yet complete.
      *
      * @authorize
@@ -74,7 +74,7 @@ class VerifyCommand extends TerminusCommand implements SiteAwareInterface, Reque
 
         $data = $response->getData();
 
-        // The Cloudflare verify-ownership endpoint returns {"verified": bool}.
+        // The verify-ownership endpoint returns {"verified": bool}.
         if (is_object($data) && !empty($data->verified) && $data->verified === true) {
             $this->log()->notice(
                 'Ownership of {domain} on {site}.{env} has been verified.',
@@ -104,7 +104,7 @@ class VerifyCommand extends TerminusCommand implements SiteAwareInterface, Reque
             ]);
             $domainData = $domainResponse->getData();
 
-            // Check Cloudflare-style verification (challenges.ready)
+            // Check new-gcdn style verification (challenges.ready)
             if (
                 is_object($domainData)
                 && !empty($domainData->challenges)
@@ -150,7 +150,7 @@ class VerifyCommand extends TerminusCommand implements SiteAwareInterface, Reque
             ]
         );
 
-        // Try Cloudflare challenge format (2 TXT records).
+        // Try new-gcdn challenge format (2 TXT records).
         if (
             is_object($domainData)
             && !empty($domainData->challenges)

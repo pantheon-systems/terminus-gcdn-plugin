@@ -12,8 +12,8 @@ use Pantheon\Terminus\Request\RequestAwareTrait;
 /**
  * Class UpgradeCommand.
  *
- * Migrates a site from Fastly to Cloudflare GCDN. Calls the
- * migrate-to-cloudflare endpoint per environment, then triggers
+ * Migrates a site from Fastly to new-gcdn. Calls the
+ * migration endpoint per environment, then triggers
  * converge_site to update DNS records (Route53) for platform hostnames.
  *
  * @package Pantheon\TerminusGCDN\Commands
@@ -24,9 +24,9 @@ class UpgradeCommand extends TerminusCommand implements SiteAwareInterface, Requ
     use RequestAwareTrait;
 
     /**
-     * Upgrades a site from Fastly to Cloudflare GCDN.
+     * Upgrades a site from Fastly to new-gcdn.
      *
-     * Migrates all environments (dev, test, live) to Cloudflare and
+     * Migrates all environments (dev, test, live) to new-gcdn and
      * triggers a site converge to update platform hostname DNS.
      *
      * @authorize
@@ -35,7 +35,7 @@ class UpgradeCommand extends TerminusCommand implements SiteAwareInterface, Requ
      *
      * @param string $site_id Site name or UUID
      *
-     * @usage <site> Migrates <site> from Fastly to Cloudflare GCDN.
+     * @usage <site> Migrates <site> from Fastly to new-gcdn.
      *
      * @throws \Pantheon\Terminus\Exceptions\TerminusException
      */
@@ -45,7 +45,7 @@ class UpgradeCommand extends TerminusCommand implements SiteAwareInterface, Requ
         $environments = ['dev', 'test', 'live'];
 
         // Step 1: Trigger cdn_migration workflow via site-level workflows endpoint
-        $this->log()->notice('Migrating {site} to Cloudflare...', ['site' => $site->getName()]);
+        $this->log()->notice('Migrating {site} to new-gcdn...', ['site' => $site->getName()]);
 
         $migrateUrl = sprintf('sites/%s/workflows', $site->id);
 
@@ -62,10 +62,10 @@ class UpgradeCommand extends TerminusCommand implements SiteAwareInterface, Requ
             $message = is_object($data) && !empty($data->message) ? $data->message : '';
 
             if (stripos($message, 'already') !== false || stripos($message, 'cloudflare') !== false) {
-                $this->log()->notice('Site already migrated to Cloudflare.');
+                $this->log()->notice('Site already migrated to new-gcdn.');
             } else {
                 throw new TerminusException(
-                    'Failed to migrate {site} to Cloudflare: {msg}',
+                    'Failed to migrate {site} to new-gcdn: {msg}',
                     ['site' => $site_id, 'msg' => $message ?: 'HTTP ' . $migrateResponse->getStatusCode()]
                 );
             }

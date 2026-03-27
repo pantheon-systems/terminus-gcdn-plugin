@@ -58,7 +58,7 @@ class VerifyCommand extends TerminusCommand implements SiteAwareInterface, Reque
 
         $response = $this->request()->request($verifyUrl, [
             'method' => 'POST',
-            'json' => ['challenge_type' => 'dns-01'],
+            'form_params' => ['challenge_type' => 'dns-01'],
         ]);
 
         if ($response->isError()) {

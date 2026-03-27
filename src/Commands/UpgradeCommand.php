@@ -12,6 +12,10 @@ use Pantheon\Terminus\Request\RequestAwareTrait;
 /**
  * Class UpgradeCommand.
  *
+ * Migrates a site from Fastly to Cloudflare GCDN. Calls the
+ * migrate-to-cloudflare endpoint per environment, then triggers
+ * converge_site to update DNS records (Route53) for platform hostnames.
+ *
  * @package Pantheon\TerminusGCDN\Commands
  */
 class UpgradeCommand extends TerminusCommand implements SiteAwareInterface, RequestAwareInterface
@@ -20,38 +24,76 @@ class UpgradeCommand extends TerminusCommand implements SiteAwareInterface, Requ
     use RequestAwareTrait;
 
     /**
-     * Upgrades a site to GCDN with bot protection.
+     * Upgrades a site from Fastly to Cloudflare GCDN.
+     *
+     * Migrates all environments (dev, test, live) to Cloudflare and
+     * triggers a site converge to update platform hostname DNS.
      *
      * @authorize
      *
      * @command gcdn:upgrade
      *
-     * @param string $site_id Site name
+     * @param string $site_id Site name or UUID
      *
-     * @usage <site> Enables GCDN upgrade for <site>.
+     * @usage <site> Migrates <site> from Fastly to Cloudflare GCDN.
      *
      * @throws \Pantheon\Terminus\Exceptions\TerminusException
      */
     public function upgrade($site_id)
     {
         $site = $this->getSiteById($site_id);
-        $url = sprintf('sites/%s/hostnames/cdn-migration', $site->id);
+        $environments = ['dev', 'test', 'live'];
 
-        $response = $this->request()->request($url, [
+        // Step 1: Trigger cdn_migration workflow via site-level workflows endpoint
+        $this->log()->notice('Migrating {site} to Cloudflare...', ['site' => $site->getName()]);
+
+        $migrateUrl = sprintf('sites/%s/workflows', $site->id);
+
+        $migrateResponse = $this->request()->request($migrateUrl, [
             'method' => 'POST',
-            'json' => ['environments' => ['dev', 'test', 'live']],
+            'form_params' => [
+                'type' => 'cdn_migration',
+                'params' => (object)['environments' => $environments],
+            ],
         ]);
 
-        if ($response->isError()) {
-            throw new TerminusException(
-                'Failed to enable GCDN upgrade for {site}.',
-                ['site' => $site_id]
+        if ($migrateResponse->isError()) {
+            $data = $migrateResponse->getData();
+            $message = is_object($data) && !empty($data->message) ? $data->message : '';
+
+            if (stripos($message, 'already') !== false || stripos($message, 'cloudflare') !== false) {
+                $this->log()->notice('Site already migrated to Cloudflare.');
+            } else {
+                throw new TerminusException(
+                    'Failed to migrate {site} to Cloudflare: {msg}',
+                    ['site' => $site_id, 'msg' => $message ?: 'HTTP ' . $migrateResponse->getStatusCode()]
+                );
+            }
+        } else {
+            $this->log()->notice('Migration triggered for all environments.');
+        }
+
+        // Step 2: Trigger converge_site to update Route53 for platform hostnames
+        $this->log()->notice('Converging site to update DNS...');
+
+        $convergeUrl = sprintf('sites/%s/workflows', $site->id);
+
+        $convergeResponse = $this->request()->request($convergeUrl, [
+            'method' => 'POST',
+            'form_params' => ['type' => 'converge_site', 'params' => (object)[]],
+        ]);
+
+        if ($convergeResponse->isError()) {
+            $this->log()->warning(
+                'Failed to trigger site converge. Platform hostname DNS may not update automatically.'
             );
+        } else {
+            $this->log()->notice('Site converge triggered.');
         }
 
         $this->log()->notice(
-            'GCDN upgrade has been enabled for {site}.',
-            ['site' => $site_id]
+            'GCDN upgrade complete for {site}. Run "terminus domain:dns {site}.live" to see updated DNS records.',
+            ['site' => $site->getName()]
         );
     }
 }

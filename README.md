@@ -2,7 +2,7 @@
 
 [![Early Access](https://img.shields.io/badge/Pantheon-Early_Access-yellow?logo=pantheon&color=FFDC28)](https://docs.pantheon.io/oss-support-levels#early-access)
 
-A Terminus plugin that enables upgrading a site to GCDN with bot protection.
+A Terminus plugin that enables upgrading a site to GCDN with bot protection. Once upgraded, immediately move on to the DNS update section below.
 
 ## Installation
 

@@ -2,7 +2,7 @@
 
 [![Early Access](https://img.shields.io/badge/Pantheon-Early_Access-yellow?logo=pantheon&color=FFDC28)](https://docs.pantheon.io/oss-support-levels#early-access)
 
-A Terminus plugin that enables upgrading a site to GCDN with bot protection.
+A Terminus plugin for upgrading a site to GCDN with bot protection and managing the DNS migration for your existing domains.
 
 ## Installation
 
@@ -14,40 +14,41 @@ terminus self:plugin:install pantheon-systems/terminus-gcdn-plugin
 
 ## Usage
 
-### Upgrade a site to GCDN
+If you have existing custom domains on your site, follow all of the steps below to upgrade and migrate your DNS.
+
+### 1. Upgrade your site to GCDN
 
 ```
 terminus gcdn:upgrade <site>
 ```
 
-This activates the GCDN upgrade for the specified site, enabling the migration from Fastly to new-gcdn.
+This migrates the site from Fastly to GCDN across all environments.
 
-### Example
+### 2. Get your DNS records and TXT verification challenges
 
 ```
-terminus gcdn:upgrade my-site
+terminus gcdn:dns <site>.live
 ```
 
-### Post-upgrade steps for existing domains
+This will show the TXT records needed for domain ownership and certificate validation.
 
-If you already have custom domains on your site, follow these steps after running `gcdn:upgrade`:
+### 3. Add TXT records to your DNS provider
 
-1. Get your DNS records and TXT verification challenges:
-   ```
-   terminus gcdn:dns <site>.live
-   ```
-   This will show the TXT records needed for domain ownership and certificate validation.
+Add the TXT records from step 2 to your DNS provider.
 
-2. Add the TXT records from step 1 to your DNS provider.
+### 4. Verify your domains
 
-3. Wait a few minutes for DNS propagation, then verify each domain. Verification typically takes a few minutes to complete:
-   ```
-   terminus gcdn:verify <site>.live example.com
-   terminus gcdn:verify <site>.live www.example.com
-   ```
+Wait a few minutes for DNS propagation, then verify each domain. Verification typically takes a few minutes to complete:
 
-4. Once verification passes, add the CNAME or A/AAAA records shown in the `gcdn:dns` output to point your domains to the new GCDN edge.
+```
+terminus gcdn:verify <site>.live example.com
+terminus gcdn:verify <site>.live www.example.com
+```
+
+### 5. Update your DNS records
+
+Once verification passes, add the CNAME or A/AAAA records shown in the `gcdn:dns` output to point your domains to the new GCDN edge.
 
 ## Help
 
-Run `terminus help gcdn:upgrade` for help. You can also run `terminus help gcdn:dns` and `terminus help gcdn:verify` for details on those commands.
+Run `terminus help gcdn:upgrade`, `terminus help gcdn:dns`, or `terminus help gcdn:verify` for details on each command.

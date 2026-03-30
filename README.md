@@ -28,33 +28,26 @@ This activates the GCDN upgrade for the specified site, enabling the migration f
 terminus gcdn:upgrade my-site
 ```
 
-### Post-upgrade steps
+### Post-upgrade steps for existing domains
 
-After enabling the GCDN upgrade, you will need to re-add and verify your custom domains:
+If you already have custom domains on your site, follow these steps after running `gcdn:upgrade`:
 
-1. Add your domains to the live environment:
+1. Get your DNS records and TXT verification challenges:
    ```
-   terminus domain:add <site>.live example.com
-   terminus domain:add <site>.live www.example.com
+   terminus gcdn:dns <site>.live
    ```
+   This will show the TXT records needed for domain ownership and certificate validation.
 
-2. Verify domain ownership:
-   ```
-   terminus domain:verify <site>.live example.com
-   terminus domain:verify <site>.live www.example.com
-   ```
+2. Add the TXT records from step 1 to your DNS provider.
 
-3. Review the recommended DNS settings:
+3. Wait a few minutes for DNS propagation, then verify each domain. Verification typically takes a few minutes to complete:
    ```
-   terminus domain:dns <site>.live
+   terminus gcdn:verify <site>.live example.com
+   terminus gcdn:verify <site>.live www.example.com
    ```
 
-4. Update your DNS records with the values from step 3.
+4. Once verification passes, add the CNAME or A/AAAA records shown in the `gcdn:dns` output to point your domains to the new GCDN edge.
 
 ## Help
 
-Run `terminus help gcdn:upgrade` for help.
-
-## TODO
-
-Add this to packagist. 
+Run `terminus help gcdn:upgrade` for help. You can also run `terminus help gcdn:dns` and `terminus help gcdn:verify` for details on those commands.

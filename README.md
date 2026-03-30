@@ -20,7 +20,7 @@ terminus self:plugin:install pantheon-systems/terminus-gcdn-plugin
 terminus gcdn:upgrade <site>
 ```
 
-This activates the GCDN upgrade for the specified site, enabling the migration from Fastly to Cloudflare.
+This activates the GCDN upgrade for the specified site, enabling the migration from Fastly to new-gcdn.
 
 ### Example
 

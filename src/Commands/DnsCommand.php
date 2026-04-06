@@ -100,8 +100,10 @@ class DnsCommand extends TerminusCommand implements SiteAwareInterface, RequestA
         $this->output()->writeln('');
 
         // DNS records
+        $matchedTypes = [];
         if (!empty($domainInfo->dns_status_details) && !empty($domainInfo->dns_status_details->dns_records)) {
             $this->output()->writeln('DNS Records:');
+            $dnsRecords = [];
             foreach ($domainInfo->dns_status_details->dns_records as $record) {
                 if (!is_object($record)) {
                     continue;
@@ -110,23 +112,35 @@ class DnsCommand extends TerminusCommand implements SiteAwareInterface, RequestA
                 $value = $record->value ?? $record->recommended_value ?? $record->target_value ?? '';
                 $detected = $record->detected_value ?? $record->current_value ?? '';
                 $status = $record->status ?? '';
+                $detectedMatches = !empty($detected) && strcasecmp(trim($detected), trim($value)) === 0;
+
+                if ($detectedMatches) {
+                    $matchedTypes[] = $rType;
+                }
 
                 $line = "  {$rType}: {$value}";
                 if ($detected) {
                     $line .= " (current: {$detected})";
                 }
                 if ($status === 'action_required') {
-                    $line .= self::RED . ' [action required]' . self::RESET;
+                    if ($detectedMatches) {
+                        $line .= self::YELLOW . ' [propagating verification]' . self::RESET;
+                    } else {
+                        $line .= self::RED . ' [action required]' . self::RESET;
+                    }
                 } elseif ($status) {
                     $line .= " [{$status}]";
                 }
                 $this->output()->writeln($line);
             }
-        }
 
-        // Note about DNS record choice for custom domains
-        if ($type === 'custom' && !empty($domainInfo->dns_status_details->dns_records)) {
-            $this->output()->writeln(self::CYAN . '  Note: Use either A/AAAA records OR a CNAME — not both.' . self::RESET);
+            $allThreeMatch = in_array('CNAME', $matchedTypes) && in_array('A', $matchedTypes) && in_array('AAAA', $matchedTypes);
+            if ($allThreeMatch) {
+                $this->output()->writeln('');
+                $this->output()->writeln(self::YELLOW . '  Caution: Both CNAME and A/AAAA records are configured. Use either a CNAME or A/AAAA records — not both.' . self::RESET);
+            } elseif ($type === 'custom') {
+                $this->output()->writeln(self::CYAN . '  Note: Use either A/AAAA records OR a CNAME — not both.' . self::RESET);
+            }
         }
 
         // Skip challenges for non-Cloudflare domains

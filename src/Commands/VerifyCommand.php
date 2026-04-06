@@ -122,8 +122,8 @@ class VerifyCommand extends TerminusCommand implements SiteAwareInterface, Reque
         // Step 3: Check DNS record status.
         $dnsConfigured = false;
         $dnsRecords = [];
+        $matchedTypes = [];
         if (is_object($domainInfo) && !empty($domainInfo->dns_status_details) && !empty($domainInfo->dns_status_details->dns_records)) {
-            $allCorrect = true;
             $hasRecords = false;
             foreach ($domainInfo->dns_status_details->dns_records as $record) {
                 if (!is_object($record)) {
@@ -134,12 +134,27 @@ class VerifyCommand extends TerminusCommand implements SiteAwareInterface, Reque
                 $value = $record->value ?? $record->recommended_value ?? $record->target_value ?? '';
                 $detected = $record->detected_value ?? $record->current_value ?? '';
                 $status = $record->status ?? '';
-                $dnsRecords[] = ['type' => $rType, 'value' => $value, 'detected' => $detected, 'status' => $status];
-                if ($status === 'action_required') {
-                    $allCorrect = false;
+
+                // Check if detected value matches the target
+                $detectedMatches = !empty($detected) && strcasecmp(trim($detected), trim($value)) === 0;
+                if ($detectedMatches) {
+                    $matchedTypes[] = $rType;
                 }
+
+                $dnsRecords[] = [
+                    'type' => $rType,
+                    'value' => $value,
+                    'detected' => $detected,
+                    'status' => $status,
+                    'matches' => $detectedMatches,
+                ];
             }
-            $dnsConfigured = $hasRecords && $allCorrect;
+
+            // DNS is configured if CNAME matches, or both A and AAAA match
+            $cnameMatches = in_array('CNAME', $matchedTypes);
+            $aMatches = in_array('A', $matchedTypes);
+            $aaaaMatches = in_array('AAAA', $matchedTypes);
+            $dnsConfigured = $hasRecords && ($cnameMatches || ($aMatches && $aaaaMatches));
         }
 
         // Step 4: Check challenges from Cloudflare format.
@@ -155,10 +170,17 @@ class VerifyCommand extends TerminusCommand implements SiteAwareInterface, Reque
         }
 
         // Step 5: Report status.
+        $allThreeMatch = in_array('CNAME', $matchedTypes) && in_array('A', $matchedTypes) && in_array('AAAA', $matchedTypes);
+
         if ($ownershipVerified && $dnsConfigured) {
             $this->output()->writeln('Cloudflare ownership: ' . self::GREEN . 'verified' . self::RESET);
             $this->output()->writeln('DNS: ' . self::GREEN . 'configured correctly' . self::RESET);
             $this->output()->writeln('');
+            $this->renderDnsRecords($dnsRecords);
+            if ($allThreeMatch) {
+                $this->output()->writeln(self::YELLOW . '  Caution: Both CNAME and A/AAAA records are configured. Use either a CNAME or A/AAAA records — not both.' . self::RESET);
+                $this->output()->writeln('');
+            }
             return;
         }
 
@@ -167,16 +189,7 @@ class VerifyCommand extends TerminusCommand implements SiteAwareInterface, Reque
             $this->output()->writeln('DNS: ' . self::RED . 'not configured' . self::RESET);
             $this->output()->writeln('');
             $this->output()->writeln('DNS Records:');
-            foreach ($dnsRecords as $rec) {
-                $line = "  {$rec['type']}: {$rec['value']}";
-                if ($rec['detected']) {
-                    $line .= " (current: {$rec['detected']})";
-                }
-                if ($rec['status'] === 'action_required') {
-                    $line .= self::RED . ' [action required]' . self::RESET;
-                }
-                $this->output()->writeln($line);
-            }
+            $this->renderDnsRecords($dnsRecords);
             $this->output()->writeln('');
             return;
         }
@@ -248,17 +261,46 @@ class VerifyCommand extends TerminusCommand implements SiteAwareInterface, Reque
         // DNS records.
         if (!empty($dnsRecords)) {
             $this->output()->writeln('DNS Records:');
-            foreach ($dnsRecords as $rec) {
-                $line = "  {$rec['type']}: {$rec['value']}";
-                if ($rec['detected']) {
-                    $line .= " (current: {$rec['detected']})";
-                }
-                if ($rec['status'] === 'action_required') {
+            $this->renderDnsRecords($dnsRecords);
+            $this->output()->writeln('');
+        }
+    }
+
+    /**
+     * Renders DNS records with appropriate status indicators.
+     */
+    private function renderDnsRecords(array $dnsRecords)
+    {
+        $allThreeMatch = true;
+        $matchedTypes = [];
+        foreach ($dnsRecords as $rec) {
+            if (!empty($rec['matches'])) {
+                $matchedTypes[] = $rec['type'];
+            }
+        }
+        $allThreeMatch = in_array('CNAME', $matchedTypes) && in_array('A', $matchedTypes) && in_array('AAAA', $matchedTypes);
+
+        foreach ($dnsRecords as $rec) {
+            $line = "  {$rec['type']}: {$rec['value']}";
+            if ($rec['detected']) {
+                $line .= " (current: {$rec['detected']})";
+            }
+
+            if ($rec['status'] === 'action_required') {
+                if (!empty($rec['matches'])) {
+                    $line .= self::YELLOW . ' [propagating verification]' . self::RESET;
+                } else {
                     $line .= self::RED . ' [action required]' . self::RESET;
                 }
-                $this->output()->writeln($line);
+            } elseif ($rec['status']) {
+                $line .= " [{$rec['status']}]";
             }
+            $this->output()->writeln($line);
+        }
+
+        if ($allThreeMatch) {
             $this->output()->writeln('');
+            $this->output()->writeln(self::YELLOW . '  Caution: Both CNAME and A/AAAA records are configured. Use either a CNAME or A/AAAA records — not both.' . self::RESET);
         }
     }
 }

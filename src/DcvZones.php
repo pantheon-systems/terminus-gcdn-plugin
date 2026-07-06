@@ -17,6 +17,11 @@ final class DcvZones
      * DCV delegation IDs per GCDN zone. Customer-migratable sites land in
      * one of these zones; the ID appears in the public DCV CNAME target,
      * so these values are not secret.
+     *
+     * Interim approach: this map must be updated (and the plugin released)
+     * if a zone is added or a DCV UUID changes. EDRT-9378 tracks serving
+     * the DCV target from the domains API instead, at which point this
+     * class can be deleted.
      */
     public const DCV_IDS = [
         'cfp1c' => 'dc5ecddca9c0e249',

@@ -205,7 +205,7 @@ class O2oCommand extends TerminusCommand implements SiteAwareInterface, RequestA
         if ($dcvTarget !== null) {
             $this->output()->writeln('  CNAME — DCV delegation for certificate issuance + renewal (' . self::BOLD . 'DNS only / grey cloud' . self::RESET . '):');
             $this->output()->writeln("    Name:  _acme-challenge.{$hostname}");
-            $this->output()->writeln("    Value: {$dcvTarget}");
+            $this->output()->writeln("    Value: {$dcvTarget}.");
             $this->output()->writeln("    Delete any existing _acme-challenge.{$hostname} TXT records first — they conflict with this CNAME.");
             $this->output()->writeln(self::YELLOW . '    Keep this record permanently — removing it breaks certificate renewal.' . self::RESET);
         } elseif ($zone !== null) {
@@ -220,7 +220,7 @@ class O2oCommand extends TerminusCommand implements SiteAwareInterface, RequestA
         if ($trafficTarget !== null) {
             $this->output()->writeln('  CNAME — traffic (add ' . self::BOLD . 'LAST' . self::RESET . ', after ownership is verified and the certificate is active; Proxied or DNS only):');
             $this->output()->writeln("    Name:  {$hostname}");
-            $this->output()->writeln("    Value: {$trafficTarget}");
+            $this->output()->writeln("    Value: {$trafficTarget}.");
         } else {
             $this->output()->writeln(self::RED . '  Could not determine the traffic CNAME target — run "terminus gcdn:dns" for this environment.' . self::RESET);
         }

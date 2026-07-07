@@ -258,6 +258,15 @@ class VerifyCommand extends TerminusCommand implements SiteAwareInterface, Reque
             $this->output()->writeln('');
         }
 
+        if (in_array($cdn, ['cloudflare', 'both'])) {
+            $this->output()->writeln(
+                self::CYAN . 'Domain already proxied through your own Cloudflare zone (orange-to-orange)? Run "terminus gcdn:o2o '
+                . $site->getName() . '.' . $env->getName() . ' ' . $domain
+                . '" for the full record set including DCV delegation.' . self::RESET
+            );
+            $this->output()->writeln('');
+        }
+
         // DNS records.
         if (!empty($dnsRecords)) {
             $this->output()->writeln('DNS Records:');

@@ -49,6 +49,16 @@ terminus gcdn:verify <site>.live www.example.com
 
 Once verification passes, add the CNAME or A/AAAA records shown in the `gcdn:dns` output to point your domains to the new GCDN edge.
 
+## Orange-to-Orange (O2O) migrations
+
+If your domain is already proxied through your own Cloudflare zone (orange-clouded), use the O2O flow instead of the plain TXT verification above:
+
+```
+terminus gcdn:o2o <site>.live
+```
+
+This prints the per-domain record set to add in your Cloudflare DNS: the hostname ownership TXT record, the DCV delegation CNAME (which must stay in place permanently and be set to DNS only / grey cloud), and the final traffic CNAME. Pass a domain as a second argument to limit output to one hostname. See the O2O documentation for the surrounding steps (Zone Hold, SSL/TLS encryption mode).
+
 ## Help
 
-Run `terminus help gcdn:upgrade`, `terminus help gcdn:dns`, or `terminus help gcdn:verify` for details on each command.
+Run `terminus help gcdn:upgrade`, `terminus help gcdn:dns`, `terminus help gcdn:verify`, or `terminus help gcdn:o2o` for details on each command.

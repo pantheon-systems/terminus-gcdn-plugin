@@ -1,6 +1,6 @@
 # Terminus GCDN Plugin
 
-[![Early Access](https://img.shields.io/badge/Pantheon-Early_Access-yellow?logo=pantheon&color=FFDC28)](https://docs.pantheon.io/oss-support-levels#early-access)
+[![Actively Maintained](https://img.shields.io/badge/Pantheon-Actively_Maintained-yellow?logo=pantheon&color=FFDC28)](https://docs.pantheon.io/oss-support-levels#actively-maintained)
 
 A Terminus plugin for upgrading a site to GCDN with bot protection and managing the DNS migration for your existing domains.
 

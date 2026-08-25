@@ -38,15 +38,27 @@ class VerifyCommand extends TerminusCommand implements SiteAwareInterface, Reque
      *
      * @param string $site_env Site & environment in the format `site-name.env`
      * @param string $domain Domain e.g. `example.com`
+     * @option method Challenge type to verify against: dns (default) or http
      *
-     * @usage <site>.<env> <domain_name> Verifies ownership and DNS of <domain_name> on <site>'s <env> environment.
+     * @usage <site>.<env> <domain_name> Verifies ownership and DNS of <domain_name> using DNS challenges.
+     * @usage <site>.<env> <domain_name> --method=http Verifies using HTTP challenges.
      *
      * @throws \Pantheon\Terminus\Exceptions\TerminusException
      */
-    public function verify($site_env, $domain)
+    public function verify($site_env, $domain, $options = ['method' => 'dns'])
     {
         $env = $this->getEnv($site_env);
         $site = $this->getSiteById($site_env);
+
+        $method = strtolower($options['method'] ?? 'dns');
+        $challengeTypeMap = ['dns' => 'dns-01', 'http' => 'http-01'];
+        if (!isset($challengeTypeMap[$method])) {
+            throw new TerminusException(
+                'Invalid method "{method}". Use "dns" or "http".',
+                ['method' => $method]
+            );
+        }
+        $challengeType = $challengeTypeMap[$method];
 
         // Step 1: Trigger verification via verify-ownership endpoint.
         $verifyUrl = sprintf(
@@ -58,7 +70,7 @@ class VerifyCommand extends TerminusCommand implements SiteAwareInterface, Reque
 
         $response = $this->request()->request($verifyUrl, [
             'method' => 'POST',
-            'form_params' => ['challenge_type' => 'dns-01'],
+            'form_params' => ['challenge_type' => $challengeType],
         ]);
 
         if ($response->isError()) {
@@ -116,6 +128,17 @@ class VerifyCommand extends TerminusCommand implements SiteAwareInterface, Reque
 
         $cdn = $domainInfo->cdn ?? 'fastly';
         $type = $domainInfo->type ?? 'custom';
+
+        if (!in_array($cdn, ['cloudflare', 'both'])) {
+            $this->output()->writeln(
+                self::RED . 'This domain is not on GCDN (Cloudflare). '
+                . 'Run "terminus domain:dns ' . $site->getName() . '.' . $env->getName()
+                . '" for standard DNS records.' . self::RESET
+            );
+            $this->output()->writeln('');
+            return;
+        }
+
         $this->output()->writeln("Type: {$type}");
         $this->output()->writeln('');
 

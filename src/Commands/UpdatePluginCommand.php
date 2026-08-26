@@ -16,7 +16,7 @@ use Pantheon\Terminus\Helpers\LocalMachineHelper;
  */
 class UpdatePluginCommand extends TerminusCommand
 {
-    const VERSION = '0.2.0';
+    const VERSION = '0.3.0';
     const GITHUB_REPO = 'pantheon-systems/terminus-gcdn-plugin';
     const COMPOSER_PACKAGE = 'pantheon-systems/terminus-gcdn-plugin';
 

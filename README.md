@@ -75,6 +75,25 @@ terminus gcdn:challenge <site>.live example.com --method=http
 terminus gcdn:challenge <site>.live example.com --method=dns
 ```
 
+To switch all unverified Cloudflare domains on an environment at once:
+
+```
+terminus gcdn:challenge <site>.live --all --method=http
+```
+
+Verified hostnames are never modified. Hostnames already on the requested method are skipped. The command prints a per-hostname status line and a summary:
+
+```
+  example.com — switched to HTTP
+  www.example.com — skipped (already HTTP)
+  blog.example.com — skipped (verified)
+
+Summary
+  Toggled:                 1
+  Skipped (verified):      1
+  Skipped (already http):  1
+```
+
 When set to DNS, the command shows DCV delegation CNAME and TXT records. When set to HTTP, it shows the cutover instructions and serve-file challenge token.
 
 Note: A site converge resets the method to the default for the hostname type (custom → DNS, platform → HTTP).

@@ -45,6 +45,12 @@ terminus gcdn:verify <site>.live example.com
 terminus gcdn:verify <site>.live www.example.com
 ```
 
+By default, verification uses DNS challenges. To verify using HTTP challenges instead:
+
+```
+terminus gcdn:verify <site>.live example.com --method=http
+```
+
 ### 5. Update your DNS records
 
 Once verification passes, add the CNAME or A/AAAA records shown in the `gcdn:dns` output to point your domains to the new GCDN edge.
@@ -59,6 +65,30 @@ terminus gcdn:o2o <site>.live
 
 This prints the per-domain record set to add in your Cloudflare DNS: the hostname ownership TXT record, the DCV delegation CNAME (which must stay in place permanently and be set to DNS only / grey cloud), and the final traffic CNAME. Pass a domain as a second argument to limit output to one hostname. See the O2O documentation for the surrounding steps (Zone Hold, SSL/TLS encryption mode).
 
+## Certificate challenge method
+
+View or change the certificate challenge method (DNS or HTTP) for a domain:
+
+```
+terminus gcdn:challenge <site>.live example.com
+terminus gcdn:challenge <site>.live example.com --method=http
+terminus gcdn:challenge <site>.live example.com --method=dns
+```
+
+When set to DNS, the command shows DCV delegation CNAME and TXT records. When set to HTTP, it shows the cutover instructions and serve-file challenge token.
+
+Note: A site converge resets the method to the default for the hostname type (custom → DNS, platform → HTTP).
+
+## Updating the plugin
+
+Check for and install the latest version:
+
+```
+terminus gcdn:update
+```
+
+This checks the latest release on GitHub and runs the update automatically.
+
 ## Help
 
-Run `terminus help gcdn:upgrade`, `terminus help gcdn:dns`, `terminus help gcdn:verify`, or `terminus help gcdn:o2o` for details on each command.
+Run `terminus help gcdn:upgrade`, `terminus help gcdn:dns`, `terminus help gcdn:verify`, `terminus help gcdn:challenge`, `terminus help gcdn:o2o`, or `terminus help gcdn:update` for details on each command.

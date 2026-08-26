@@ -13,9 +13,9 @@ use Pantheon\TerminusGCDN\DcvZones;
 /**
  * Class ChallengeCommand.
  *
- * Shows or toggles the certificate challenge method (DNS or HTTP) for a
- * domain on a Cloudflare-migrated site. Aligns with the dashboard's
- * CertChallengePanel toggle.
+ * Shows or toggles the certificate challenge method (DNS or HTTP) for
+ * domains on a Cloudflare-migrated site. Verified hostnames are never
+ * modified — only unverified hostnames can have their method toggled.
  *
  * @package Pantheon\TerminusGCDN\Commands
  */
@@ -38,7 +38,10 @@ class ChallengeCommand extends TerminusCommand implements SiteAwareInterface, Re
      * Shows or toggles the certificate challenge method for a domain.
      *
      * Without --method, displays the current challenge method and records.
-     * With --method, switches the method and displays updated records.
+     * With --method, switches the method for unverified hostnames only.
+     * Verified hostnames are never modified.
+     *
+     * Use --all to apply to every Cloudflare custom domain on the environment.
      *
      * Note: A site converge resets the method to the hostname-type default
      * (custom → dns, platform → http).
@@ -48,20 +51,22 @@ class ChallengeCommand extends TerminusCommand implements SiteAwareInterface, Re
      * @command gcdn:challenge
      *
      * @param string $site_env Site & environment in the format `site-name.env`
-     * @param string $domain Domain e.g. `example.com`
+     * @param string|null $domain Domain e.g. `example.com` (omit when using --all)
      * @option method Set the challenge method: dns or http
+     * @option all Apply to all Cloudflare custom domains on the environment (requires --method)
      *
      * @usage <site>.<env> <domain> Shows the current challenge method and records for <domain>.
      * @usage <site>.<env> <domain> --method=http Switches <domain> to HTTP certificate challenges.
-     * @usage <site>.<env> <domain> --method=dns Switches <domain> to DNS certificate challenges.
+     * @usage <site>.<env> --all --method=http Switches all unverified Cloudflare domains to HTTP.
      *
      * @throws \Pantheon\Terminus\Exceptions\TerminusException
      */
-    public function challenge($site_env, $domain, $options = ['method' => null])
+    public function challenge($site_env, $domain = null, $options = ['method' => null, 'all' => false])
     {
         $env = $this->getEnv($site_env);
         $site = $this->getSiteById($site_env);
         $method = $options['method'];
+        $all = !empty($options['all']);
 
         if ($method !== null) {
             $method = strtolower($method);
@@ -71,31 +76,14 @@ class ChallengeCommand extends TerminusCommand implements SiteAwareInterface, Re
                     ['method' => $method]
                 );
             }
+        }
 
-            $updateUrl = sprintf(
-                'sites/%s/environments/%s/hostnames/%s',
-                $site->id,
-                $env->id,
-                rawurlencode($domain)
-            );
+        if ($all && $method === null) {
+            throw new TerminusException('--all requires --method. Example: --all --method=http');
+        }
 
-            $apiMethod = self::METHOD_TO_API[$method];
-            $response = $this->request()->request($updateUrl, [
-                'method' => 'PATCH',
-                'form_params' => ['verify_method' => $apiMethod],
-            ]);
-
-            if ($response->isError()) {
-                throw new TerminusException(
-                    'Failed to update challenge method for {domain}.',
-                    ['domain' => $domain]
-                );
-            }
-
-            $this->log()->notice(
-                'Challenge method updated to {method} for {domain}.',
-                ['method' => strtoupper($method), 'domain' => $domain]
-            );
+        if (!$all && $domain === null) {
+            throw new TerminusException('Provide a domain name, or use --all to target all Cloudflare domains.');
         }
 
         $domainsUrl = sprintf(
@@ -114,15 +102,20 @@ class ChallengeCommand extends TerminusCommand implements SiteAwareInterface, Re
         }
 
         $domainsData = $domainsResponse->getData();
-        $domainInfo = null;
-        if (is_array($domainsData)) {
-            foreach ($domainsData as $d) {
-                if (is_object($d) && !empty($d->id) && $d->id === $domain) {
-                    $domainInfo = $d;
-                    break;
-                }
-            }
+        if (!is_array($domainsData)) {
+            $domainsData = [];
         }
+
+        if ($all) {
+            $this->handleAll($site, $env, $domainsData, $method);
+        } else {
+            $this->handleSingle($site, $env, $domainsData, $domain, $method);
+        }
+    }
+
+    private function handleSingle($site, $env, array $domainsData, string $domain, ?string $method)
+    {
+        $domainInfo = $this->findDomain($domainsData, $domain);
 
         if ($domainInfo === null) {
             throw new TerminusException(
@@ -140,15 +133,158 @@ class ChallengeCommand extends TerminusCommand implements SiteAwareInterface, Re
             return;
         }
 
-        $this->renderChallengeInfo($domainInfo, $method !== null);
+        $toggled = false;
+        if ($method !== null) {
+            $toggled = $this->toggleMethod($site, $env, $domainInfo, $method);
+        }
+
+        $this->renderChallengeInfo($domainInfo, $toggled);
     }
 
-    private function renderChallengeInfo($domainInfo, $wasToggled)
+    private function handleAll($site, $env, array $domainsData, string $method)
+    {
+        $eligible = [];
+        foreach ($domainsData as $d) {
+            if (!is_object($d) || empty($d->id)) {
+                continue;
+            }
+            $cdn = $d->cdn ?? 'fastly';
+            $type = $d->type ?? 'custom';
+            if ($type === 'custom' && in_array($cdn, ['cloudflare', 'both'])) {
+                $eligible[] = $d;
+            }
+        }
+
+        if (empty($eligible)) {
+            $this->output()->writeln('No Cloudflare custom domains found on '
+                . $site->getName() . '.' . $env->getName());
+            return;
+        }
+
+        $this->output()->writeln('');
+        $this->output()->writeln(
+            self::CYAN . self::BOLD . '=== Bulk Challenge Method Toggle — '
+            . $site->getName() . '.' . $env->getName() . ' ===' . self::RESET
+        );
+        $this->output()->writeln('Target method: ' . self::BOLD . strtoupper($method) . self::RESET);
+        $this->output()->writeln('');
+
+        $toggled = 0;
+        $skippedVerified = 0;
+        $skippedSameMethod = 0;
+        $errors = 0;
+
+        foreach ($eligible as $domainInfo) {
+            $hostname = $domainInfo->id;
+            $result = $this->toggleMethod($site, $env, $domainInfo, $method);
+
+            if ($result === true) {
+                $toggled++;
+            } elseif ($result === null) {
+                $errors++;
+            } else {
+                $reason = $result;
+                if ($reason === 'verified') {
+                    $skippedVerified++;
+                } elseif ($reason === 'same_method') {
+                    $skippedSameMethod++;
+                }
+            }
+        }
+
+        $this->output()->writeln('');
+        $this->output()->writeln(self::BOLD . 'Summary' . self::RESET);
+        $this->output()->writeln(self::GREEN . "  Toggled:                 {$toggled}" . self::RESET);
+        if ($skippedVerified > 0) {
+            $this->output()->writeln(self::CYAN . "  Skipped (verified):      {$skippedVerified}" . self::RESET);
+        }
+        if ($skippedSameMethod > 0) {
+            $this->output()->writeln(self::CYAN . "  Skipped (already {$method}):  {$skippedSameMethod}" . self::RESET);
+        }
+        if ($errors > 0) {
+            $this->output()->writeln(self::RED . "  Errors:                  {$errors}" . self::RESET);
+        }
+        $this->output()->writeln('');
+
+        if ($toggled > 0) {
+            $this->output()->writeln(
+                self::YELLOW . 'Note: A site converge will reset the method to the default '
+                . 'for the hostname type (custom -> DNS, platform -> HTTP).' . self::RESET
+            );
+            $this->output()->writeln('');
+        }
+    }
+
+    /**
+     * Attempts to toggle the verify method on a single hostname.
+     *
+     * Returns true if toggled, a skip-reason string if skipped, or null on error.
+     *
+     * @return true|string|null
+     */
+    private function toggleMethod($site, $env, $domainInfo, string $method)
+    {
+        $hostname = $domainInfo->id;
+        $challenges = $domainInfo->challenges ?? null;
+        $isVerified = is_object($challenges)
+            && !empty($challenges->verified)
+            && $challenges->verified === true;
+
+        if ($isVerified) {
+            $this->output()->writeln(
+                "  {$hostname} — " . self::CYAN . 'skipped (verified)' . self::RESET
+            );
+            return 'verified';
+        }
+
+        $currentApiMethod = $domainInfo->verify_method ?? 'txt';
+        $requestedApiMethod = self::METHOD_TO_API[$method];
+
+        if ($currentApiMethod === $requestedApiMethod) {
+            $this->output()->writeln(
+                "  {$hostname} — " . self::CYAN . 'skipped (already '
+                . strtoupper($method) . ')' . self::RESET
+            );
+            return 'same_method';
+        }
+
+        $updateUrl = sprintf(
+            'sites/%s/environments/%s/hostnames/%s',
+            $site->id,
+            $env->id,
+            rawurlencode($hostname)
+        );
+
+        $response = $this->request()->request($updateUrl, [
+            'method' => 'PATCH',
+            'form_params' => ['verify_method' => $requestedApiMethod],
+        ]);
+
+        if ($response->isError()) {
+            $this->output()->writeln(
+                "  {$hostname} — " . self::RED . 'error (PATCH failed)' . self::RESET
+            );
+            return null;
+        }
+
+        $this->output()->writeln(
+            "  {$hostname} — " . self::GREEN . 'switched to '
+            . strtoupper($method) . self::RESET
+        );
+        return true;
+    }
+
+    private function renderChallengeInfo($domainInfo, bool $wasToggled)
     {
         $domain = $domainInfo->id;
         $currentMethod = $domainInfo->verify_method ?? null;
         $isHttp = $currentMethod === 'http';
         $displayMethod = $isHttp ? 'HTTP' : 'DNS';
+
+        $challenges = $domainInfo->challenges ?? null;
+        $isVerified = is_object($challenges)
+            && !empty($challenges->verified)
+            && $challenges->verified === true;
 
         $this->output()->writeln('');
         $this->output()->writeln(
@@ -157,6 +293,11 @@ class ChallengeCommand extends TerminusCommand implements SiteAwareInterface, Re
         $this->output()->writeln(self::YELLOW . $domain . self::RESET);
         $this->output()->writeln('------');
         $this->output()->writeln('Current method: ' . self::BOLD . $displayMethod . self::RESET);
+
+        if ($isVerified) {
+            $this->output()->writeln('Ownership: ' . self::GREEN . 'verified' . self::RESET);
+        }
+
         $this->output()->writeln('');
 
         if ($wasToggled) {
@@ -210,14 +351,12 @@ class ChallengeCommand extends TerminusCommand implements SiteAwareInterface, Re
 
         if (is_object($challenges) && !empty($challenges->ownership_txt)) {
             $verified = !empty($challenges->verified) && $challenges->verified === true;
-            if ($verified) {
-                $this->output()->writeln('Hostname ownership: ' . self::GREEN . 'verified' . self::RESET);
-            } else {
+            if (!$verified) {
                 $this->output()->writeln(self::BOLD . 'TXT Record — Domain Ownership' . self::RESET);
                 $this->output()->writeln("  Name:  {$challenges->ownership_txt->key}");
                 $this->output()->writeln("  Value: {$challenges->ownership_txt->val}");
+                $this->output()->writeln('');
             }
-            $this->output()->writeln('');
             $hasChallenges = true;
         }
 
@@ -282,15 +421,23 @@ class ChallengeCommand extends TerminusCommand implements SiteAwareInterface, Re
 
         if (is_object($challenges) && !empty($challenges->ownership_txt)) {
             $verified = !empty($challenges->verified) && $challenges->verified === true;
-            if ($verified) {
-                $this->output()->writeln('Hostname ownership: ' . self::GREEN . 'verified' . self::RESET);
-            } else {
+            if (!$verified) {
                 $this->output()->writeln(self::BOLD . 'TXT Record — Domain Ownership' . self::RESET);
                 $this->output()->writeln("  Name:  {$challenges->ownership_txt->key}");
                 $this->output()->writeln("  Value: {$challenges->ownership_txt->val}");
+                $this->output()->writeln('');
             }
-            $this->output()->writeln('');
         }
+    }
+
+    private function findDomain(array $domainsData, string $domain): ?object
+    {
+        foreach ($domainsData as $d) {
+            if (is_object($d) && !empty($d->id) && $d->id === $domain) {
+                return $d;
+            }
+        }
+        return null;
     }
 
     private function detectZone($domainInfo): ?string

@@ -253,18 +253,31 @@ class ChallengeCommand extends TerminusCommand implements SiteAwareInterface, Re
         }
 
         $updateUrl = sprintf(
-            'sites/%s/environments/%s/domains/%s',
+            'sites/%s/environments/%s/hostnames/%s',
             $site->id,
             $env->id,
             rawurlencode($hostname)
         );
 
-        $response = $this->request()->request($updateUrl, [
-            'method' => 'PATCH',
-            'form_params' => ['verify_method' => $requestedApiMethod],
-        ]);
+        try {
+            $response = $this->request()->request($updateUrl, [
+                'method' => 'PATCH',
+                'form_params' => ['verify_method' => $requestedApiMethod],
+            ]);
+        } catch (\Exception $e) {
+            $message = $e->getMessage();
+            if (strpos($message, 'json_decode') !== false || strpos($message, 'Syntax error') !== false) {
+                // yggdrasil returns a plain string "Hostname updated successfully."
+                // which Terminus tries to json_decode — treat as success
+            } else {
+                $this->output()->writeln(
+                    "  {$hostname} — " . self::RED . "error ({$message})" . self::RESET
+                );
+                return null;
+            }
+        }
 
-        if ($response->isError()) {
+        if (isset($response) && $response->isError()) {
             $this->output()->writeln(
                 "  {$hostname} — " . self::RED . 'error (PATCH failed)' . self::RESET
             );

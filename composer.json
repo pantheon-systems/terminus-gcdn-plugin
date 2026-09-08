@@ -12,11 +12,20 @@
         "php": ">=8.2"
     },
     "require-dev": {
-        "pantheon-systems/terminus": "^4"
+        "pantheon-systems/terminus": "^4",
+        "phpunit/phpunit": "^10.5 || ^11"
     },
     "extra": {
         "terminus": {
             "compatible-version": "^3 || ^4"
         }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Pantheon\\TerminusGCDN\\Tests\\": "tests"
+        }
+    },
+    "scripts": {
+        "test": "phpunit"
     }
 }

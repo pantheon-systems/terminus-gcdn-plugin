@@ -2,7 +2,7 @@
 
 [![Actively Maintained](https://img.shields.io/badge/Pantheon-Actively_Maintained-yellow?logo=pantheon&color=FFDC28)](https://docs.pantheon.io/oss-support-levels#actively-maintained)
 
-A Terminus plugin for upgrading a site to GCDN with bot protection and managing the DNS migration for your existing domains.
+A Terminus plugin for upgrading a site to GCDN with bot protection, managing the DNS migration for your existing domains, and retrieving bot-bypass tokens for your own monitors and automation.
 
 ## Installation
 
@@ -98,6 +98,26 @@ When set to DNS, the command shows DCV delegation CNAME and TXT records. When se
 
 Note: A site converge resets the method to the default for the hostname type (custom → DNS, platform → HTTP).
 
+## Bot-bypass tokens
+
+If your site is on GCDN with bot protection, your own uptime monitors, load tests and automation can be exempted from bot challenges by sending a per-site bot-bypass token in a request header. Retrieve the tokens with:
+
+```
+terminus gcdn:bot-bypass <site>
+```
+
+The command prints two tokens: the **current** token, and a **next** token that becomes valid three months later. Each row shows the window the token is accepted in and the header name to send it in. Switch to the next token on or after its `Valid From` date; both are accepted until the current token expires, so there is never a gap.
+
+One token covers every environment on the site (dev, test, live and all multidevs). The argument is a site name, not `<site>.<env>`.
+
+For CI pipelines and monitoring configuration, use the machine-readable form:
+
+```
+terminus gcdn:bot-bypass <site> --format=json
+```
+
+Treat these tokens as secrets. Do not commit them or paste them into shared logs. If the token service is unavailable, Terminus retries for up to about a minute before reporting the failure.
+
 ## Updating the plugin
 
 Check for and install the latest version:
@@ -110,4 +130,4 @@ This checks the latest release on GitHub and runs the update automatically.
 
 ## Help
 
-Run `terminus help gcdn:upgrade`, `terminus help gcdn:dns`, `terminus help gcdn:verify`, `terminus help gcdn:challenge`, `terminus help gcdn:o2o`, or `terminus help gcdn:update` for details on each command.
+Run `terminus help gcdn:upgrade`, `terminus help gcdn:dns`, `terminus help gcdn:verify`, `terminus help gcdn:challenge`, `terminus help gcdn:o2o`, `terminus help gcdn:bot-bypass`, or `terminus help gcdn:update` for details on each command.

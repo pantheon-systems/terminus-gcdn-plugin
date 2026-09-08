@@ -135,7 +135,14 @@ class ChallengeCommand extends TerminusCommand implements SiteAwareInterface, Re
 
         $toggled = false;
         if ($method !== null) {
-            $toggled = $this->toggleMethod($site, $env, $domainInfo, $method);
+            $result = $this->toggleMethod($site, $env, $domainInfo, $method);
+            $toggled = $result === true;
+            if ($result === null) {
+                return;
+            }
+            if ($toggled) {
+                $domainInfo->verify_method = self::METHOD_TO_API[$method];
+            }
         }
 
         $this->renderChallengeInfo($domainInfo, $toggled);
@@ -255,12 +262,25 @@ class ChallengeCommand extends TerminusCommand implements SiteAwareInterface, Re
             rawurlencode($hostname)
         );
 
-        $response = $this->request()->request($updateUrl, [
-            'method' => 'PATCH',
-            'form_params' => ['verify_method' => $requestedApiMethod],
-        ]);
+        try {
+            $response = $this->request()->request($updateUrl, [
+                'method' => 'PATCH',
+                'form_params' => ['verify_method' => $requestedApiMethod],
+            ]);
+        } catch (\Exception $e) {
+            $message = $e->getMessage();
+            if (strpos($message, 'json_decode') !== false || strpos($message, 'Syntax error') !== false) {
+                // yggdrasil returns a plain string "Hostname updated successfully."
+                // which Terminus tries to json_decode — treat as success
+            } else {
+                $this->output()->writeln(
+                    "  {$hostname} — " . self::RED . "error ({$message})" . self::RESET
+                );
+                return null;
+            }
+        }
 
-        if ($response->isError()) {
+        if (isset($response) && $response->isError()) {
             $this->output()->writeln(
                 "  {$hostname} — " . self::RED . 'error (PATCH failed)' . self::RESET
             );
@@ -296,6 +316,16 @@ class ChallengeCommand extends TerminusCommand implements SiteAwareInterface, Re
 
         if ($isVerified) {
             $this->output()->writeln('Ownership: ' . self::GREEN . 'verified' . self::RESET);
+        } elseif ($isHttp) {
+            $this->output()->writeln(
+                self::YELLOW . 'Domain ownership verification must be completed before '
+                . 'HTTP-01 challenges can succeed.' . self::RESET
+            );
+            $this->output()->writeln(
+                self::CYAN . 'If this domain is proxied through your own Cloudflare zone (O2O), '
+                . 'we highly encourage using "terminus gcdn:o2o" to appropriately bridge both '
+                . 'Cloudflare zones. HTTP-01 challenge cutover will work, but may not route correctly.' . self::RESET
+            );
         }
 
         $this->output()->writeln('');
@@ -383,14 +413,30 @@ class ChallengeCommand extends TerminusCommand implements SiteAwareInterface, Re
 
     private function renderHttpChallenges($domainInfo)
     {
+        $domain = $domainInfo->id;
         $challenges = $domainInfo->challenges ?? null;
         $acme = $domainInfo->acme_preauthorization_challenges ?? null;
+        $zone = $this->detectZone($domainInfo);
+        $trafficTarget = $zone !== null ? "fe.{$zone}.edge.pantheon.io" : null;
 
         $this->output()->writeln(self::BOLD . 'HTTP-01 via Cutover' . self::RESET);
         $this->output()->writeln(
-            'Point your DNS to Pantheon and the certificate will be issued automatically.'
+            'Point your DNS to Pantheon. Once traffic reaches the Cloudflare edge,'
         );
-        $this->output()->writeln('No additional action needed after DNS cutover.');
+        $this->output()->writeln(
+            'the certificate will be issued automatically — no file placement needed.'
+        );
+        if ($trafficTarget !== null) {
+            $this->output()->writeln('');
+            $this->output()->writeln('  CNAME ' . $domain . ' -> ' . $trafficTarget . '.');
+            $this->output()->writeln(
+                '  Or use the A/AAAA records from "terminus gcdn:dns" for apex domains.'
+            );
+        } else {
+            $this->output()->writeln(
+                '  Run "terminus gcdn:dns" for the DNS records to point to Pantheon.'
+            );
+        }
         $this->output()->writeln('');
 
         $hasHttp = false;

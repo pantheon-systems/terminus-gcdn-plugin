@@ -135,7 +135,11 @@ class ChallengeCommand extends TerminusCommand implements SiteAwareInterface, Re
 
         $toggled = false;
         if ($method !== null) {
-            $toggled = $this->toggleMethod($site, $env, $domainInfo, $method);
+            $result = $this->toggleMethod($site, $env, $domainInfo, $method);
+            $toggled = $result === true;
+            if ($result === null) {
+                return;
+            }
         }
 
         $this->renderChallengeInfo($domainInfo, $toggled);
@@ -249,7 +253,7 @@ class ChallengeCommand extends TerminusCommand implements SiteAwareInterface, Re
         }
 
         $updateUrl = sprintf(
-            'sites/%s/environments/%s/hostnames/%s',
+            'sites/%s/environments/%s/domains/%s',
             $site->id,
             $env->id,
             rawurlencode($hostname)

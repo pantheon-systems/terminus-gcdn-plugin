@@ -1,10 +1,13 @@
+# Managed by github-terraform — do not edit manually
 ---
 apiVersion: backstage.io/v1alpha1
 kind: Component
 metadata:
-  name: terminus-gcdn-plugin
-  description: Terminus plugin for upgrading sites to GCDN with bot protection
+  name: "terminus-gcdn-plugin"
+  description: "Terminus plugin for upgrading sites to GCDN with bot protection"
+  annotations:
+    "backstage.io/techdocs-ref": "dir:docs/"
 spec:
-  type: library
-  lifecycle: production
-  owner: edge-routing
+  type: "library"
+  lifecycle: "production"
+  owner: "platform-edge-routing"

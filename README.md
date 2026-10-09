@@ -108,6 +108,8 @@ terminus gcdn:bot-bypass <site>
 
 The command prints two tokens: the **current** token, and a **next** token that becomes valid three months later. Each row shows the window the token is accepted in and the header name to send it in. Switch to the next token on or after its `Valid From` date; both are accepted until the current token expires, so there is never a gap.
 
+**New tokens are issued every month.** Running the command in a later month returns a different pair. That is expected and does not revoke anything: every token stays valid until its own `Expires` date, so tokens you have already deployed keep working.
+
 One token covers every environment on the site (dev, test, live and all multidevs). The argument is a site name, not `<site>.<env>`.
 
 For CI pipelines and monitoring configuration, use the machine-readable form:

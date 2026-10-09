@@ -17,6 +17,15 @@ final class BotBypassResponse
     public const MALFORMED_MESSAGE = 'Unexpected response from the bot-bypass token service.';
 
     /**
+     * Tokens derive from the month they are fetched in, so a later fetch shows
+     * different values while earlier ones stay valid. Without this, a re-run
+     * reads as a reset (BUGS-12173).
+     */
+    public const ISSUANCE_NOTICE = 'New tokens are issued every month, so running this command in a later month '
+        . 'shows different values. Tokens you have already deployed keep working until their own Expires date; '
+        . 'you do not need to replace them.';
+
+    /**
      * Maps a non-200 status to a message the customer can act on, or null
      * for success. Never includes response body text.
      */
@@ -90,6 +99,8 @@ final class BotBypassResponse
         } else {
             $lines[] = 'A successor token is not available yet. Re-run this command later to get it.';
         }
+
+        $lines[] = self::ISSUANCE_NOTICE;
 
         $lines[] = 'Treat these tokens as secrets: do not commit them or paste them into shared logs.';
 

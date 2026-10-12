@@ -22,7 +22,7 @@ final class TestVerifyCommand extends VerifyCommand
     /** The fixtures' observed_at (2026-10-11T18:04:05Z). */
     public const OBSERVED_AT = 1791741845;
 
-    /** An hour after observed_at, so its cooldown doesn't apply by default. */
+    /** An hour after the fixtures' observed_at. */
     public int $clock = self::OBSERVED_AT + 3600;
 
     protected function lookupCname(string $host): ?string

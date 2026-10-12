@@ -30,10 +30,7 @@ class VerifyCommand extends TerminusCommand implements SiteAwareInterface, Reque
     use DomainOutputTrait;
 
     /** Seconds before this machine rechecks the same hostname again. */
-    const RECHECK_COOLDOWN = 300;
-
-    /** Seconds after a Cloudflare status read in which a recheck adds nothing. */
-    const OBSERVED_COOLDOWN = 120;
+    const RECHECK_COOLDOWN = 60;
 
     const RECHECK_CACHE_FILE = 'gcdn-recheck.json';
 
@@ -45,7 +42,7 @@ class VerifyCommand extends TerminusCommand implements SiteAwareInterface, Reque
      * For a GCDN custom domain that isn't active yet, this asks Cloudflare to
      * check it again now (like Force Recheck in the dashboard). Pantheon sees
      * the result within about 10 minutes; run the command again to see it.
-     * A domain is rechecked at most once every 5 minutes from this machine.
+     * A domain is rechecked at most once a minute from this machine.
      *
      * Exits 0 when the domain is active or its DNS records are ready, and 1
      * when it isn't ready, isn't found, or its status is unavailable.
@@ -315,26 +312,21 @@ class VerifyCommand extends TerminusCommand implements SiteAwareInterface, Reque
     }
 
     /**
-     * Why a `{}` recheck would add nothing right now, or null.
+     * Why a `{}` recheck is held back right now, or null.
+     *
+     * Only this machine's own last recheck counts. A recent Cloudflare status
+     * read (`cloudflare_status_observed_at`) doesn't: a poll only reads the
+     * status, while the PATCH makes Cloudflare check the domain again, and
+     * every PATCH restarts policy-docs' 10-30 second polling, so that time is
+     * nearly always recent right after a domain is added or rechecked.
      */
     private function recheckSkipReason($site, $env, ChallengeState $state): ?string
     {
         $now = $this->now();
-
-        $observed = $state->observedAt();
-        $observedAt = $observed !== null ? strtotime($observed) : false;
-        if ($observedAt !== false && $now - $observedAt >= 0 && $now - $observedAt < self::OBSERVED_COOLDOWN) {
-            return sprintf('Pantheon read the Cloudflare status %d seconds ago', $now - $observedAt);
-        }
-
         $last = $this->readRecheckCache()[$this->recheckKey($site, $env, $state->hostname())] ?? null;
         if (is_int($last) && $now - $last >= 0 && $now - $last < self::RECHECK_COOLDOWN) {
-            $minutes = intdiv($now - $last, 60);
-            return $minutes < 1
-                ? 'one was requested from this machine less than a minute ago'
-                : sprintf('one was requested from this machine %d minute%s ago', $minutes, $minutes === 1 ? '' : 's');
+            return sprintf('one was requested from this machine %d seconds ago', $now - $last);
         }
-
         return null;
     }
 

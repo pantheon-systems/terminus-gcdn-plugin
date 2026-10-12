@@ -247,12 +247,13 @@ final class VerifyCommandTest extends CommandHarness
         $this->assertStringContainsString('Recheck skipped (--no-recheck).', $this->plain());
     }
 
-    public function testRecheckIsSkippedRightAfterACloudflareRead(): void
+    /** A recent poll only read the status; it doesn't replace the recheck. */
+    public function testRecheckIsNotSkippedRightAfterACloudflareRead(): void
     {
         $domain = $this->domain(F::PENDING);
-        $this->verify($domain->id, [$domain], [], [], fn($cmd) => $cmd->clock = TestVerifyCommand::OBSERVED_AT + 60);
-        $this->assertSame($this->postOnly($domain->id), $this->callLog());
-        $this->assertStringContainsString('Recheck skipped: Pantheon read the Cloudflare status 60 seconds ago.', $this->plain());
+        $this->verify($domain->id, [$domain], [], [], fn($cmd) => $cmd->clock = TestVerifyCommand::OBSERVED_AT + 10);
+        $this->assertSame($this->recheckAndPost($domain->id), $this->callLog());
+        $this->assertStringNotContainsString('Recheck skipped', $this->plain());
     }
 
     public function testRecheckCooldownOnThisMachine(): void
@@ -265,15 +266,15 @@ final class VerifyCommandTest extends CommandHarness
         $this->assertCount(2, $this->writes(), 'first run rechecks');
         $this->assertFileExists($this->cacheDir . '/gcdn-recheck.json');
 
-        $this->verify($domain->id, [$domain], [], $config, fn($cmd) => $cmd->clock = $start + 120);
+        $this->verify($domain->id, [$domain], [], $config, fn($cmd) => $cmd->clock = $start + 30);
         $this->assertSame($this->postOnly($domain->id), $this->callLog());
-        $this->assertStringContainsString('Recheck skipped: one was requested from this machine 2 minutes ago.', $this->plain());
+        $this->assertStringContainsString('Recheck skipped: one was requested from this machine 30 seconds ago.', $this->plain());
 
-        $this->verify('PENDING.example.com', [$domain], [], $config, fn($cmd) => $cmd->clock = $start + 120);
+        $this->verify('PENDING.example.com', [$domain], [], $config, fn($cmd) => $cmd->clock = $start + 30);
         $this->assertCount(1, $this->writes(), 'the cooldown ignores case');
 
-        $this->verify($domain->id, [$domain], [], $config, fn($cmd) => $cmd->clock = $start + 300);
-        $this->assertCount(2, $this->writes(), 'rechecks again after 5 minutes');
+        $this->verify($domain->id, [$domain], [], $config, fn($cmd) => $cmd->clock = $start + 60);
+        $this->assertCount(2, $this->writes(), 'rechecks again after a minute');
     }
 
     public function testCooldownIsPerHostname(): void
@@ -318,8 +319,11 @@ final class VerifyCommandTest extends CommandHarness
 
     public function testP2MethodChangeIgnoresTheCooldown(): void
     {
+        $config = $this->useCacheDir();
         $domain = $this->domain(F::PENDING);
-        $this->verify($domain->id, [$domain], ['method' => 'http'], [], fn($cmd) => $cmd->clock = TestVerifyCommand::OBSERVED_AT + 10);
+        $start = TestVerifyCommand::OBSERVED_AT + 3600;
+        $this->verify($domain->id, [$domain], [], $config, fn($cmd) => $cmd->clock = $start);
+        $this->verify($domain->id, [$domain], ['method' => 'http'], $config, fn($cmd) => $cmd->clock = $start + 10);
         $this->assertSame(['verify_method' => 'http'], (array) $this->writes()[0][2]['form_params']);
     }
 

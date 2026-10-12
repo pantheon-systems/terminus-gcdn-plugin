@@ -47,7 +47,7 @@ terminus gcdn:verify <site>.live example.com
 terminus gcdn:verify <site>.live www.example.com
 ```
 
-`gcdn:verify` asks Cloudflare to check the domain again now (like **Force Recheck** in the dashboard), then shows its status. Pantheon sees the result within about 10 minutes, so run the command again to see it. A domain is rechecked at most once every 5 minutes from your machine, and not at all once it's active. To only show the status, use `--no-recheck`.
+`gcdn:verify` asks Cloudflare to check the domain again now (like **Force Recheck** in the dashboard), then shows its status. Pantheon sees the result within about 10 minutes, so run the command again to see it. A domain is rechecked at most once a minute from your machine, and not at all once it's active. To only show the status, use `--no-recheck`.
 
 The status is one of:
 

@@ -10,7 +10,7 @@ use Symfony\Component\Console\Input\ArrayInput;
 use Symfony\Component\Console\Output\BufferedOutput;
 
 /**
- * gcdn:update, pinned to the behavior at 0.4.0. GitHub and the
+ * gcdn:update. GitHub and the
  * `terminus self:plugin:update` process are replaced through the command's
  * httpGet() and runProcess() seams, so nothing leaves the machine.
  */
@@ -76,6 +76,20 @@ final class UpdatePluginCommandTest extends TestCase
         $this->assertNull($cmd->update());
         $this->assertSame([], $cmd->ran);
         $this->assertStringContainsString('is up to date (v' . UpdatePluginCommand::VERSION . ')', $this->plain());
+    }
+
+    /** The beta isn't offered the older stable release, and is offered the matching stable one. */
+    public function testBetaComparesBelowItsStableRelease(): void
+    {
+        $this->assertSame('0.5.0-beta.1', UpdatePluginCommand::VERSION);
+
+        $cmd = $this->command([self::RELEASES => self::release('0.4.0')]);
+        $cmd->update();
+        $this->assertSame([], $cmd->ran);
+
+        $cmd = $this->command([self::RELEASES => self::release('0.5.0')]);
+        $cmd->update();
+        $this->assertCount(1, $cmd->ran);
     }
 
     public function testNewerReleaseRunsSelfPluginUpdate(): void

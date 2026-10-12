@@ -8,14 +8,15 @@ use Pantheon\Terminus\Site\SiteAwareInterface;
 use Pantheon\Terminus\Site\SiteAwareTrait;
 use Pantheon\Terminus\Request\RequestAwareInterface;
 use Pantheon\Terminus\Request\RequestAwareTrait;
-use Pantheon\TerminusGCDN\DcvZones;
+use Pantheon\TerminusGCDN\ChallengeState;
 
 /**
  * Class ChallengeCommand.
  *
  * Shows or toggles the certificate challenge method (DNS or HTTP) for
- * domains on a Cloudflare-migrated site. Verified hostnames are never
- * modified — only unverified hostnames can have their method toggled.
+ * domains on a Cloudflare-migrated site. A toggle is a hostname PATCH that
+ * makes policy-docs resend the hostname to Cloudflare, so it's refused for
+ * domains that are active or whose DNS records are already ready.
  *
  * @package Pantheon\TerminusGCDN\Commands
  */
@@ -23,25 +24,28 @@ class ChallengeCommand extends TerminusCommand implements SiteAwareInterface, Re
 {
     use SiteAwareTrait;
     use RequestAwareTrait;
-
-    const YELLOW = "\033[33m";
-    const GREEN = "\033[32m";
-    const RED = "\033[31m";
-    const CYAN = "\033[36m";
-    const RESET = "\033[0m";
-    const BOLD = "\033[1m";
+    use DomainOutputTrait;
 
     const VALID_METHODS = ['dns', 'http'];
     const METHOD_TO_API = ['dns' => 'txt', 'http' => 'http'];
+
+    const SKIP_REASONS = [
+        'verified' => 'skipped (active)',
+        'ready' => 'skipped (DNS records ready)',
+        'candidate_http' => 'skipped (served through Cloudflare; HTTP validation would be intercepted)',
+        'same_method' => null, // "skipped (already DNS|HTTP)"
+    ];
 
     /**
      * Shows or toggles the certificate challenge method for a domain.
      *
      * Without --method, displays the current challenge method and records.
-     * With --method, switches the method for unverified hostnames only.
-     * Verified hostnames are never modified.
+     * With --method, switches the method for domains that aren't active or
+     * ready yet. HTTP is refused for domains served through Cloudflare today,
+     * because the proxy intercepts HTTP validation.
      *
      * Use --all to apply to every Cloudflare custom domain on the environment.
+     * Exits 1 when a toggle fails or the domain's status is unavailable.
      *
      * Note: A site converge resets the method to the hostname-type default
      * (custom → dns, platform → http).
@@ -57,7 +61,7 @@ class ChallengeCommand extends TerminusCommand implements SiteAwareInterface, Re
      *
      * @usage <site>.<env> <domain> Shows the current challenge method and records for <domain>.
      * @usage <site>.<env> <domain> --method=http Switches <domain> to HTTP certificate challenges.
-     * @usage <site>.<env> --all --method=http Switches all unverified Cloudflare domains to HTTP.
+     * @usage <site>.<env> --all --method=http Switches all eligible Cloudflare domains to HTTP.
      *
      * @throws \Pantheon\Terminus\Exceptions\TerminusException
      */
@@ -86,34 +90,36 @@ class ChallengeCommand extends TerminusCommand implements SiteAwareInterface, Re
             throw new TerminusException('Provide a domain name, or use --all to target all Cloudflare domains.');
         }
 
-        $domainsUrl = sprintf(
-            'sites/%s/environments/%s/domains?hydrate[]=as_list&hydrate[]=recommendations',
-            $site->id,
-            $env->id
-        );
-
-        $domainsResponse = $this->request()->request($domainsUrl, ['method' => 'get']);
-
-        if ($domainsResponse->isError()) {
+        $domainsData = $this->fetchDomains($site, $env);
+        if ($domainsData === null) {
             throw new TerminusException(
                 'Failed to fetch domains for {site}.{env}.',
                 ['site' => $site->getName(), 'env' => $env->getName()]
             );
         }
 
-        $domainsData = $domainsResponse->getData();
-        if (!is_array($domainsData)) {
-            $domainsData = [];
-        }
-
         if ($all) {
-            $this->handleAll($site, $env, $domainsData, $method);
-        } else {
-            $this->handleSingle($site, $env, $domainsData, $domain, $method);
+            return $this->handleAll($site, $env, $domainsData, $method);
         }
+        return $this->handleSingle($site, $env, $domainsData, $domain, $method);
     }
 
-    private function handleSingle($site, $env, array $domainsData, string $domain, ?string $method)
+    private function fetchDomains($site, $env): ?array
+    {
+        $domainsUrl = sprintf(
+            'sites/%s/environments/%s/domains?hydrate[]=as_list&hydrate[]=recommendations',
+            $site->id,
+            $env->id
+        );
+        $response = $this->request()->request($domainsUrl, ['method' => 'get']);
+        if ($response->isError()) {
+            return null;
+        }
+        $data = $response->getData();
+        return is_array($data) ? $data : [];
+    }
+
+    private function handleSingle($site, $env, array $domainsData, string $domain, ?string $method): int
     {
         $domainInfo = $this->findDomain($domainsData, $domain);
 
@@ -124,135 +130,148 @@ class ChallengeCommand extends TerminusCommand implements SiteAwareInterface, Re
             );
         }
 
-        $cdn = $domainInfo->cdn ?? 'fastly';
-        if (!in_array($cdn, ['cloudflare', 'both'])) {
-            $this->output()->writeln(
-                self::RED . 'This domain is not on Cloudflare. '
-                . 'Challenge method toggle is only available for GCDN-migrated domains.' . self::RESET
-            );
-            return;
+        $state = new ChallengeState($domainInfo);
+        switch ($state->state()) {
+            case ChallengeState::UNAVAILABLE:
+                $this->line($this->paint('Status unavailable: Pantheon couldn\'t read this domain\'s CDN status. Try again shortly.', 'red'));
+                return 1;
+            case ChallengeState::PLATFORM:
+                // P7: platform domains are Pantheon's to manage.
+                $this->line('Managed by Pantheon: platform domains need no challenge records, and their method can\'t be changed.');
+                return $method !== null ? 1 : 0;
+            case ChallengeState::FASTLY:
+                $this->line($this->paint(
+                    'This domain is not on Cloudflare. Challenge method toggle is only available for GCDN-migrated domains.',
+                    'red'
+                ));
+                return $method !== null ? 1 : 0;
+            case ChallengeState::MISSING:
+                $this->line($this->paint('Status not available yet: Pantheon hasn\'t received this domain\'s Cloudflare status. Try again shortly.', 'yellow'));
+                return 1;
         }
 
         $toggled = false;
         if ($method !== null) {
-            $result = $this->toggleMethod($site, $env, $domainInfo, $method);
-            $toggled = $result === true;
+            $result = $this->toggleMethod($site, $env, $state, $method);
             if ($result === null) {
-                return;
+                return 1;
             }
+            $toggled = $result === true;
             if ($toggled) {
-                $domainInfo->verify_method = self::METHOD_TO_API[$method];
+                // P6: show what the API has after the PATCH, not before it.
+                $fresh = $this->fetchDomains($site, $env);
+                $freshInfo = $fresh !== null ? $this->findDomain($fresh, $state->hostname()) : null;
+                if ($freshInfo !== null) {
+                    $state = new ChallengeState($freshInfo);
+                }
             }
         }
 
-        $this->renderChallengeInfo($domainInfo, $toggled);
+        $this->renderChallengeInfo($state, $toggled, $toggled ? self::METHOD_TO_API[$method] : null);
+        return 0;
     }
 
-    private function handleAll($site, $env, array $domainsData, string $method)
+    private function handleAll($site, $env, array $domainsData, string $method): int
     {
         $eligible = [];
         foreach ($domainsData as $d) {
             if (!is_object($d) || empty($d->id)) {
                 continue;
             }
-            $cdn = $d->cdn ?? 'fastly';
-            $type = $d->type ?? 'custom';
-            if ($type === 'custom' && in_array($cdn, ['cloudflare', 'both'])) {
-                $eligible[] = $d;
+            $state = new ChallengeState($d);
+            if ($state->isCustomCloudflare() && $state->state() !== ChallengeState::MISSING) {
+                $eligible[] = $state;
             }
         }
 
         if (empty($eligible)) {
-            $this->output()->writeln('No Cloudflare custom domains found on '
-                . $site->getName() . '.' . $env->getName());
-            return;
+            $this->line('No Cloudflare custom domains found on ' . $site->getName() . '.' . $env->getName());
+            return 0;
         }
 
-        $this->output()->writeln('');
-        $this->output()->writeln(
-            self::CYAN . self::BOLD . '=== Bulk Challenge Method Toggle — '
-            . $site->getName() . '.' . $env->getName() . ' ===' . self::RESET
-        );
-        $this->output()->writeln('Target method: ' . self::BOLD . strtoupper($method) . self::RESET);
-        $this->output()->writeln('');
+        $this->line('');
+        $this->line($this->paint(
+            '=== Bulk Challenge Method Toggle — ' . $site->getName() . '.' . $env->getName() . ' ===',
+            'cyan',
+            'bold'
+        ));
+        $this->line('Target method: ' . $this->paint(strtoupper($method), 'bold'));
+        $this->line('');
 
-        $toggled = 0;
-        $skippedVerified = 0;
-        $skippedSameMethod = 0;
-        $errors = 0;
-
-        foreach ($eligible as $domainInfo) {
-            $hostname = $domainInfo->id;
-            $result = $this->toggleMethod($site, $env, $domainInfo, $method);
-
+        $counts = ['toggled' => 0, 'verified' => 0, 'ready' => 0, 'candidate_http' => 0, 'same_method' => 0, 'errors' => 0];
+        foreach ($eligible as $state) {
+            $result = $this->toggleMethod($site, $env, $state, $method);
             if ($result === true) {
-                $toggled++;
+                $counts['toggled']++;
             } elseif ($result === null) {
-                $errors++;
+                $counts['errors']++;
             } else {
-                $reason = $result;
-                if ($reason === 'verified') {
-                    $skippedVerified++;
-                } elseif ($reason === 'same_method') {
-                    $skippedSameMethod++;
-                }
+                $counts[$result]++;
             }
         }
 
-        $this->output()->writeln('');
-        $this->output()->writeln(self::BOLD . 'Summary' . self::RESET);
-        $this->output()->writeln(self::GREEN . "  Toggled:                 {$toggled}" . self::RESET);
-        if ($skippedVerified > 0) {
-            $this->output()->writeln(self::CYAN . "  Skipped (verified):      {$skippedVerified}" . self::RESET);
+        $this->line('');
+        $this->line($this->paint('Summary', 'bold'));
+        $row = fn(string $label, int $count) => sprintf('  %-25s %d', $label, $count);
+        $this->line($this->paint($row('Toggled:', $counts['toggled']), 'green'));
+        $labels = [
+            'verified' => 'Skipped (active):',
+            'ready' => 'Skipped (records ready):',
+            'candidate_http' => 'Skipped (via Cloudflare):',
+            'same_method' => "Skipped (already {$method}):",
+        ];
+        foreach ($labels as $key => $label) {
+            if ($counts[$key] > 0) {
+                $this->line($this->paint($row($label, $counts[$key]), 'cyan'));
+            }
         }
-        if ($skippedSameMethod > 0) {
-            $this->output()->writeln(self::CYAN . "  Skipped (already {$method}):  {$skippedSameMethod}" . self::RESET);
+        if ($counts['errors'] > 0) {
+            $this->line($this->paint($row('Errors:', $counts['errors']), 'red'));
         }
-        if ($errors > 0) {
-            $this->output()->writeln(self::RED . "  Errors:                  {$errors}" . self::RESET);
-        }
-        $this->output()->writeln('');
+        $this->line('');
 
-        if ($toggled > 0) {
-            $this->output()->writeln(
-                self::YELLOW . 'Note: A site converge will reset the method to the default '
-                . 'for the hostname type (custom -> DNS, platform -> HTTP).' . self::RESET
-            );
-            $this->output()->writeln('');
+        if ($counts['toggled'] > 0) {
+            $this->line($this->paint(
+                'Note: A site converge will reset the method to the default for the hostname type (custom -> DNS, platform -> HTTP).',
+                'yellow'
+            ));
+            $this->line('');
         }
+
+        return $counts['errors'] > 0 ? 1 : 0;
     }
 
     /**
      * Attempts to toggle the verify method on a single hostname.
      *
-     * Returns true if toggled, a skip-reason string if skipped, or null on error.
+     * Returns true if toggled, a key of SKIP_REASONS if skipped, or null on
+     * error.
      *
      * @return true|string|null
      */
-    private function toggleMethod($site, $env, $domainInfo, string $method)
+    private function toggleMethod($site, $env, ChallengeState $state, string $method)
     {
-        $hostname = $domainInfo->id;
-        $challenges = $domainInfo->challenges ?? null;
-        $isVerified = is_object($challenges)
-            && !empty($challenges->verified)
-            && $challenges->verified === true;
-
-        if ($isVerified) {
-            $this->output()->writeln(
-                "  {$hostname} — " . self::CYAN . 'skipped (verified)' . self::RESET
-            );
-            return 'verified';
-        }
-
-        $currentApiMethod = $domainInfo->verify_method ?? 'txt';
+        $hostname = $state->hostname();
         $requestedApiMethod = self::METHOD_TO_API[$method];
 
-        if ($currentApiMethod === $requestedApiMethod) {
-            $this->output()->writeln(
-                "  {$hostname} — " . self::CYAN . 'skipped (already '
-                . strtoupper($method) . ')' . self::RESET
-            );
-            return 'same_method';
+        // P15: never PATCH a domain that's active or ready, and never switch
+        // a domain served through Cloudflare to HTTP.
+        if ($state->active()) {
+            $reason = 'verified';
+        } elseif ($state->ready()) {
+            $reason = 'ready';
+        } elseif ($requestedApiMethod === 'http' && $state->candidate()) {
+            $reason = 'candidate_http';
+        } elseif ($state->verifyMethod() === $requestedApiMethod) {
+            $reason = 'same_method';
+        } else {
+            $reason = null;
+        }
+
+        if ($reason !== null) {
+            $label = self::SKIP_REASONS[$reason] ?? 'skipped (already ' . strtoupper($method) . ')';
+            $this->line("  {$hostname} — " . $this->paint($label, 'cyan'));
+            return $reason;
         }
 
         $updateUrl = sprintf(
@@ -267,247 +286,109 @@ class ChallengeCommand extends TerminusCommand implements SiteAwareInterface, Re
                 'method' => 'PATCH',
                 'form_params' => ['verify_method' => $requestedApiMethod],
             ]);
-        } catch (\Exception $e) {
-            $message = $e->getMessage();
-            if (strpos($message, 'json_decode') !== false || strpos($message, 'Syntax error') !== false) {
-                // yggdrasil returns a plain string "Hostname updated successfully."
-                // which Terminus tries to json_decode — treat as success
-            } else {
-                $this->output()->writeln(
-                    "  {$hostname} — " . self::RED . "error ({$message})" . self::RESET
-                );
-                return null;
-            }
-        }
-
-        if (isset($response) && $response->isError()) {
-            $this->output()->writeln(
-                "  {$hostname} — " . self::RED . 'error (PATCH failed)' . self::RESET
-            );
+        } catch (TerminusException $e) {
+            $this->line("  {$hostname} — " . $this->paint("error ({$e->getMessage()})", 'red'));
             return null;
         }
 
-        $this->output()->writeln(
-            "  {$hostname} — " . self::GREEN . 'switched to '
-            . strtoupper($method) . self::RESET
-        );
+        if ($response->isError()) {
+            $this->line("  {$hostname} — " . $this->paint('error (PATCH failed, HTTP ' . $response->getStatusCode() . ')', 'red'));
+            return null;
+        }
+
+        $this->line("  {$hostname} — " . $this->paint('switched to ' . strtoupper($method), 'green'));
         return true;
     }
 
-    private function renderChallengeInfo($domainInfo, bool $wasToggled)
+    private function renderChallengeInfo(ChallengeState $state, bool $wasToggled, ?string $toggledTo): void
     {
-        $domain = $domainInfo->id;
-        $currentMethod = $domainInfo->verify_method ?? null;
-        $isHttp = $currentMethod === 'http';
-        $displayMethod = $isHttp ? 'HTTP' : 'DNS';
+        // The re-GET may still show the old method while policy-docs
+        // processes the change.
+        $isHttp = ($toggledTo ?? $state->verifyMethod()) === 'http';
 
-        $challenges = $domainInfo->challenges ?? null;
-        $isVerified = is_object($challenges)
-            && !empty($challenges->verified)
-            && $challenges->verified === true;
+        $this->line('');
+        $this->line($this->paint('=== Certificate Challenge Method ===', 'cyan', 'bold'));
+        $this->line($this->paint($state->hostname(), 'yellow'));
+        $this->line('------');
+        $this->line('Current method: ' . $this->paint($isHttp ? 'HTTP' : 'DNS', 'bold'));
 
-        $this->output()->writeln('');
-        $this->output()->writeln(
-            self::CYAN . self::BOLD . '=== Certificate Challenge Method ===' . self::RESET
-        );
-        $this->output()->writeln(self::YELLOW . $domain . self::RESET);
-        $this->output()->writeln('------');
-        $this->output()->writeln('Current method: ' . self::BOLD . $displayMethod . self::RESET);
-
-        if ($isVerified) {
-            $this->output()->writeln('Ownership: ' . self::GREEN . 'verified' . self::RESET);
+        if ($state->active()) {
+            $this->line('Status: ' . $this->paint('ownership and certificate active', 'green'));
+        } elseif ($state->ready()) {
+            $this->line('Status: ' . $this->paint('DNS records ready (confirmed by Pantheon)', 'green'));
         } elseif ($isHttp) {
-            $this->output()->writeln(
-                self::YELLOW . 'Domain ownership verification must be completed before '
-                . 'HTTP-01 challenges can succeed.' . self::RESET
-            );
-            $this->output()->writeln(
-                self::CYAN . 'If this domain is proxied through your own Cloudflare zone (O2O), '
-                . 'we highly encourage using "terminus gcdn:o2o" to appropriately bridge both '
-                . 'Cloudflare zones. HTTP-01 challenge cutover will work, but may not route correctly.' . self::RESET
-            );
+            $this->line($this->paint(
+                'Domain ownership verification must be completed before HTTP-01 challenges can succeed.',
+                'yellow'
+            ));
+            if ($state->candidate()) {
+                $this->line($this->paint(
+                    'This domain is served through Cloudflare today, which intercepts HTTP validation. Use DNS, and see "terminus gcdn:o2o".',
+                    'yellow'
+                ));
+            }
         }
-
-        $this->output()->writeln('');
+        $this->line('');
 
         if ($wasToggled) {
-            $this->output()->writeln(
-                self::YELLOW . 'Note: A site converge will reset the method to the default '
-                . 'for the hostname type (custom -> DNS, platform -> HTTP).' . self::RESET
-            );
-            $this->output()->writeln('');
+            $this->line($this->paint(
+                'Note: A site converge will reset the method to the default for the hostname type (custom -> DNS, platform -> HTTP).',
+                'yellow'
+            ));
+            $this->line('Validation values can change while Cloudflare processes the switch. If they look unchanged, run this command again in a minute.');
+            $this->line('');
         }
 
         if ($isHttp) {
-            $this->renderHttpChallenges($domainInfo);
+            $this->renderHttpChallenges($state);
         } else {
-            $this->renderDnsChallenges($domainInfo);
+            $this->renderDnsChallenges($state);
         }
     }
 
-    private function renderDnsChallenges($domainInfo)
+    /**
+     * The DCV delegation CNAME and, until the domain is active, the
+     * ownership TXT. Never the raw cert TXT, which rotates (P5).
+     */
+    private function renderDnsChallenges(ChallengeState $state): void
     {
-        $domain = $domainInfo->id;
-        $challenges = $domainInfo->challenges ?? null;
-        $acme = $domainInfo->acme_preauthorization_challenges ?? null;
-        $hasChallenges = false;
-
-        $zone = $this->detectZone($domainInfo);
-        $dcvTarget = $zone !== null ? DcvZones::dcvTarget($domain, $zone) : null;
-
-        if ($dcvTarget !== null) {
-            $this->output()->writeln(
-                self::BOLD . 'DCV Delegation CNAME' . self::RESET . ' '
-                . self::GREEN . '(Recommended)' . self::RESET
-            );
-            $this->output()->writeln('Add a permanent CNAME for automatic certificate renewals (DNS only / grey cloud):');
-            $this->output()->writeln("  Name:  _acme-challenge.{$domain}");
-            $this->output()->writeln("  Value: {$dcvTarget}.");
-            $this->output()->writeln(self::YELLOW . '  Keep this record permanently — removing it breaks certificate renewal.' . self::RESET);
-            $this->output()->writeln('');
-            $hasChallenges = true;
-        }
-
-        if (is_object($challenges) && !empty($challenges->cert_txt)) {
-            $this->output()->writeln(
-                self::BOLD . 'TXT Record — Certificate Validation' . self::RESET . ' '
-                . self::RED . '(Not recommended — value rotates)' . self::RESET
-            );
-            $this->output()->writeln("  Name:  {$challenges->cert_txt->key}");
-            $this->output()->writeln("  Value: {$challenges->cert_txt->val}");
-            $this->output()->writeln('');
-            $hasChallenges = true;
-        }
-
-        if (is_object($challenges) && !empty($challenges->ownership_txt)) {
-            $verified = !empty($challenges->verified) && $challenges->verified === true;
-            if (!$verified) {
-                $this->output()->writeln(self::BOLD . 'TXT Record — Domain Ownership' . self::RESET);
-                $this->output()->writeln("  Name:  {$challenges->ownership_txt->key}");
-                $this->output()->writeln("  Value: {$challenges->ownership_txt->val}");
-                $this->output()->writeln('');
-            }
-            $hasChallenges = true;
-        }
-
-        if (
-            !$hasChallenges
-            && is_object($acme)
-            && !empty($acme->{'dns-01'})
-        ) {
-            $dnsChallenge = $acme->{'dns-01'};
-            if (!empty($dnsChallenge->verification_key) && !empty($dnsChallenge->verification_value)) {
-                $this->output()->writeln(self::BOLD . 'TXT Record — Certificate Validation' . self::RESET);
-                $this->output()->writeln("  Name:  {$dnsChallenge->verification_key}");
-                $this->output()->writeln("  Value: {$dnsChallenge->verification_value}");
-                $this->output()->writeln('');
-            }
-            if (!empty($dnsChallenge->ownership_key) && !empty($dnsChallenge->ownership_value)) {
-                $this->output()->writeln(self::BOLD . 'TXT Record — Domain Ownership' . self::RESET);
-                $this->output()->writeln("  Name:  {$dnsChallenge->ownership_key}");
-                $this->output()->writeln("  Value: {$dnsChallenge->ownership_value}");
-                $this->output()->writeln('');
-            }
+        $this->writeDcv($state);
+        $this->line('');
+        if (!$state->active()) {
+            $this->writeOwnershipTxt($state, $state->ready() ? 'keep it until the domain is active' : 'add this');
+            $this->line('');
         }
     }
 
-    private function renderHttpChallenges($domainInfo)
+    private function renderHttpChallenges(ChallengeState $state): void
     {
-        $domain = $domainInfo->id;
-        $challenges = $domainInfo->challenges ?? null;
-        $acme = $domainInfo->acme_preauthorization_challenges ?? null;
-        $zone = $this->detectZone($domainInfo);
-        $trafficTarget = $zone !== null ? "fe.{$zone}.edge.pantheon.io" : null;
+        $domain = $state->hostname();
+        $trafficTarget = $state->trafficTarget();
 
-        $this->output()->writeln(self::BOLD . 'HTTP-01 via Cutover' . self::RESET);
-        $this->output()->writeln(
-            'Point your DNS to Pantheon. Once traffic reaches the Cloudflare edge,'
-        );
-        $this->output()->writeln(
-            'the certificate will be issued automatically — no file placement needed.'
-        );
+        $this->line($this->paint('HTTP-01 via Cutover', 'bold'));
+        $this->line('Point your DNS to Pantheon. Once traffic reaches the Cloudflare edge,');
+        $this->line('the certificate will be issued automatically — no file placement needed.');
         if ($trafficTarget !== null) {
-            $this->output()->writeln('');
-            $this->output()->writeln('  CNAME ' . $domain . ' -> ' . $trafficTarget . '.');
-            $this->output()->writeln(
-                '  Or use the A/AAAA records from "terminus gcdn:dns" for apex domains.'
-            );
+            $this->line('');
+            $this->line("  CNAME {$domain} -> {$trafficTarget}.");
+            $this->line('  Or use the A/AAAA records from "terminus gcdn:dns" for apex domains.');
         } else {
-            $this->output()->writeln(
-                '  Run "terminus gcdn:dns" for the DNS records to point to Pantheon.'
-            );
+            $this->line('  Run "terminus gcdn:dns" for the DNS records to point to Pantheon.');
         }
-        $this->output()->writeln('');
+        $this->line('');
 
-        $hasHttp = false;
-
-        if (is_object($challenges) && !empty($challenges->cert_http)) {
-            $this->output()->writeln(self::BOLD . 'HTTP-01 via Serve File' . self::RESET);
-            $this->output()->writeln('Serve the ACME challenge token on your web server:');
-            $this->output()->writeln("  URL:   {$challenges->cert_http->key}");
-            $this->output()->writeln("  Body:  {$challenges->cert_http->val}");
-            $this->output()->writeln('');
-            $hasHttp = true;
+        $http = $state->certHttp();
+        if ($http !== null) {
+            $this->line($this->paint('HTTP-01 via Serve File', 'bold'));
+            $this->line('Serve the ACME challenge token on your web server:');
+            $this->line("  URL:   {$http['name']}");
+            $this->line("  Body:  {$http['value']}");
+            $this->line('');
         }
 
-        if (
-            !$hasHttp
-            && is_object($acme)
-            && !empty($acme->{'http-01'})
-        ) {
-            $httpChallenge = $acme->{'http-01'};
-            if (!empty($httpChallenge->verification_key) && !empty($httpChallenge->verification_value)) {
-                $this->output()->writeln(self::BOLD . 'HTTP-01 via Serve File' . self::RESET);
-                $this->output()->writeln('Serve the ACME challenge token on your web server:');
-                $this->output()->writeln("  URL:   {$httpChallenge->verification_key}");
-                $this->output()->writeln("  Body:  {$httpChallenge->verification_value}");
-                $this->output()->writeln('');
-            }
+        if (!$state->active()) {
+            $this->writeOwnershipTxt($state, $state->ready() ? 'keep it until the domain is active' : 'add this');
+            $this->line('');
         }
-
-        if (is_object($challenges) && !empty($challenges->ownership_txt)) {
-            $verified = !empty($challenges->verified) && $challenges->verified === true;
-            if (!$verified) {
-                $this->output()->writeln(self::BOLD . 'TXT Record — Domain Ownership' . self::RESET);
-                $this->output()->writeln("  Name:  {$challenges->ownership_txt->key}");
-                $this->output()->writeln("  Value: {$challenges->ownership_txt->val}");
-                $this->output()->writeln('');
-            }
-        }
-    }
-
-    private function findDomain(array $domainsData, string $domain): ?object
-    {
-        foreach ($domainsData as $d) {
-            if (is_object($d) && !empty($d->id) && $d->id === $domain) {
-                return $d;
-            }
-        }
-        return null;
-    }
-
-    private function detectZone($domainInfo): ?string
-    {
-        $recordSets = [];
-        if (!empty($domainInfo->target_dns) && is_array($domainInfo->target_dns)) {
-            $recordSets[] = $domainInfo->target_dns;
-        }
-        if (!empty($domainInfo->dns_status_details) && !empty($domainInfo->dns_status_details->dns_records)) {
-            $recordSets[] = $domainInfo->dns_status_details->dns_records;
-        }
-
-        foreach ($recordSets as $records) {
-            foreach ($records as $record) {
-                if (!is_object($record)) {
-                    continue;
-                }
-                $value = $record->target_value ?? $record->value ?? $record->recommended_value ?? '';
-                $zone = DcvZones::zoneFromCnameTarget((string) $value);
-                if ($zone !== null) {
-                    return $zone;
-                }
-            }
-        }
-        return null;
     }
 }

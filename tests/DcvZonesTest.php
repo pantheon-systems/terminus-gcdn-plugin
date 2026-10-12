@@ -28,9 +28,9 @@ final class DcvZonesTest extends TestCase
         $this->assertNull(DcvZones::dcvTarget('www.example.com', 'cfp0c'));
     }
 
-    /** P11: a wildcard passes through unchanged, giving an invalid name. */
-    public function testP11WildcardPassesThrough(): void
+    /** P11: no target is invented for a wildcard; its delegation name isn't confirmed. */
+    public function testP11WildcardHasNoTarget(): void
     {
-        $this->assertSame('*.example.com.dc5ecddca9c0e249.dcv.cloudflare.com', DcvZones::dcvTarget('*.example.com', 'cfp1c'));
+        $this->assertNull(DcvZones::dcvTarget('*.example.com', 'cfp1c'));
     }
 }

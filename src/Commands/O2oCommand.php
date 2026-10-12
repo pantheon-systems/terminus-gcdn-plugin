@@ -8,14 +8,14 @@ use Pantheon\Terminus\Site\SiteAwareInterface;
 use Pantheon\Terminus\Site\SiteAwareTrait;
 use Pantheon\Terminus\Request\RequestAwareInterface;
 use Pantheon\Terminus\Request\RequestAwareTrait;
-use Pantheon\TerminusGCDN\DcvZones;
+use Pantheon\TerminusGCDN\ChallengeState;
 
 /**
  * Class O2oCommand.
  *
  * Generates the customer DNS record set for an orange-to-orange (O2O)
- * migration — when the customer's domain is already proxied through their
- * own Cloudflare zone in front of Pantheon's GCDN zone.
+ * migration — when the customer's domain is already proxied through
+ * Cloudflare in front of Pantheon's GCDN zone. Read-only.
  *
  * @package Pantheon\TerminusGCDN\Commands
  */
@@ -23,27 +23,23 @@ class O2oCommand extends TerminusCommand implements SiteAwareInterface, RequestA
 {
     use SiteAwareTrait;
     use RequestAwareTrait;
-
-    // ANSI color codes
-    const YELLOW = "\033[33m";
-    const GREEN = "\033[32m";
-    const RED = "\033[31m";
-    const CYAN = "\033[36m";
-    const RESET = "\033[0m";
-    const BOLD = "\033[1m";
+    use DomainOutputTrait;
 
     /**
      * Generates customer DNS records for an orange-to-orange (O2O) migration,
-     * where the customer's domain is on their own Cloudflare zone.
+     * where the customer's domain is served through Cloudflare today.
+     *
+     * Read-only. Exits 1 when a domain isn't ready yet, isn't found, or its
+     * status is unavailable.
      *
      * @authorize
      *
      * @command gcdn:o2o
      *
      * @param string $site_env Site & environment in the format `site-name.env`
-     * @param string|null $domain Domain e.g. `example.com` (defaults to all Cloudflare domains on the environment)
+     * @param string|null $domain Domain e.g. `example.com` (defaults to all GCDN custom domains on the environment)
      *
-     * @usage <site>.<env> Generates O2O records for all Cloudflare domains on <site>'s <env> environment.
+     * @usage <site>.<env> Generates O2O records for all GCDN custom domains on <site>'s <env> environment.
      * @usage <site>.<env> <domain_name> Generates O2O records for <domain_name> only.
      *
      * @throws \Pantheon\Terminus\Exceptions\TerminusException
@@ -52,6 +48,7 @@ class O2oCommand extends TerminusCommand implements SiteAwareInterface, RequestA
     {
         $env = $this->getEnv($site_env);
         $site = $this->getSiteById($site_env);
+        $siteEnv = $site->getName() . '.' . $env->getName();
 
         $domainsUrl = sprintf(
             'sites/%s/environments/%s/domains?hydrate[]=as_list&hydrate[]=recommendations',
@@ -73,157 +70,131 @@ class O2oCommand extends TerminusCommand implements SiteAwareInterface, RequestA
             $domains = [];
         }
 
-        // Only custom domains on Cloudflare need O2O records.
-        $eligible = [];
-        foreach ($domains as $domainInfo) {
-            if (!is_object($domainInfo) || empty($domainInfo->id)) {
-                continue;
-            }
-            $cdn = $domainInfo->cdn ?? 'fastly';
-            $type = $domainInfo->type ?? 'custom';
-            if ($type === 'custom' && in_array($cdn, ['cloudflare', 'both'])) {
-                $eligible[] = $domainInfo;
-            }
-        }
-
         if ($domain !== null) {
-            $eligible = array_values(array_filter(
-                $eligible,
-                fn($d) => strcasecmp($d->id, $domain) === 0
-            ));
-            if (empty($eligible)) {
-                $this->output()->writeln(self::RED . 'Domain not found on this environment (or not on Cloudflare). Add it first:' . self::RESET);
-                $this->output()->writeln('  terminus domain:add ' . $site->getName() . '.' . $env->getName() . ' ' . $domain);
-                $this->output()->writeln('');
-                return;
+            $domainInfo = $this->findDomain($domains, $domain);
+            if ($domainInfo === null) {
+                $this->line($this->paint("Domain not found on {$siteEnv}. Add it first:", 'red'));
+                $this->line("  terminus domain:add {$siteEnv} {$domain}");
+                $this->line('');
+                return 1;
+            }
+            $state = new ChallengeState($domainInfo);
+            if ($state->state() === ChallengeState::PLATFORM) {
+                $this->line('Managed by Pantheon: platform domains don\'t need these records.');
+                return 0;
+            }
+            if ($state->state() === ChallengeState::FASTLY) {
+                $this->line("{$state->hostname()} isn't on GCDN (Cloudflare), so it doesn't need these records.");
+                return 0;
+            }
+            $eligible = [$state];
+        } else {
+            // GCDN custom domains, plus any whose CDN status is unavailable.
+            $eligible = [];
+            foreach ($domains as $domainInfo) {
+                if (!is_object($domainInfo) || empty($domainInfo->id)) {
+                    continue;
+                }
+                $state = new ChallengeState($domainInfo);
+                if ($state->isCustomCloudflare() || ($state->cdnUnavailable() && !$state->isPlatform())) {
+                    $eligible[] = $state;
+                }
             }
         }
 
         if (empty($eligible)) {
-            $this->output()->writeln('No Cloudflare custom domains found on ' . $site->getName() . '.' . $env->getName());
+            $this->line("No GCDN custom domains found on {$siteEnv}");
+            return 0;
+        }
+
+        $this->line('');
+        $this->line($this->paint("=== Orange-to-Orange (O2O) records — {$siteEnv} ===", 'cyan', 'bold'));
+        $this->line('Add these records in the Cloudflare zone that currently serves the domain.');
+        $this->line('');
+
+        $exit = 0;
+        foreach ($eligible as $state) {
+            if (!$this->renderDomain($state, $siteEnv)) {
+                $exit = 1;
+            }
+        }
+        return $exit;
+    }
+
+    /**
+     * Renders one domain's record set. Returns whether it's ready.
+     */
+    private function renderDomain(ChallengeState $state, string $siteEnv): bool
+    {
+        $pad = '  ';
+        $hostname = $state->hostname();
+        $zone = $state->zone();
+
+        $this->line($this->paint($hostname, 'yellow') . ($zone !== null ? "  (zone: {$zone})" : ''));
+        $this->line('------');
+
+        switch ($state->state()) {
+            case ChallengeState::UNAVAILABLE:
+                $this->line($this->paint('Status unavailable: Pantheon couldn\'t read this domain\'s CDN status. Try again shortly.', 'red'), $pad);
+                $this->line('');
+                return false;
+
+            case ChallengeState::MISSING:
+                // P12: gcdn:verify generates nothing; the status just isn't in yet.
+                $this->line($this->paint('Status not available yet: Pantheon hasn\'t received this domain\'s Cloudflare status. Try again shortly.', 'yellow'), $pad);
+                $this->line('');
+                return false;
+
+            case ChallengeState::ACTIVE:
+                $this->line('Done: ' . $this->paint('ownership and certificate active', 'green') . '. No TXT record needed.', $pad);
+                $this->line('', $pad);
+                $this->writeDcv($state, $pad);
+                $this->line('', $pad);
+                $this->writeTrafficCname($state, 'in place', $pad);
+                $this->line('');
+                return true;
+
+            case ChallengeState::READY:
+                $this->line('Ownership: ' . $this->paint('confirmed by Pantheon', 'green') . '. Next: switch DNS.', $pad);
+                $this->writeCloudflareStatus($state, $pad);
+                $this->writeZoneHold($state, $pad);
+                $this->line('', $pad);
+                $this->writeOwnershipTxt($state, 'keep it until the domain is active', $pad);
+                $this->line('', $pad);
+                $this->writeDcv($state, $pad);
+                $this->line('', $pad);
+                // P8: a domain served through Cloudflare can't verify before cutover, so the traffic step opens at ready().
+                $this->writeTrafficCname($state, 'switch to it when you\'re ready', $pad);
+                $this->line('', $pad);
+                $this->writeCutoverMessage($state, $siteEnv, $pad);
+                $this->line('');
+                return true;
+
+            default:
+                $this->line('Ownership: ' . $this->paint('not confirmed yet', 'red') . '.', $pad);
+                $this->writeCloudflareStatus($state, $pad);
+                $this->writeZoneHold($state, $pad);
+                $this->line('', $pad);
+                $this->writeOwnershipTxt($state, 'add this; removable once the domain is active', $pad);
+                $this->line('', $pad);
+                $this->writeDcv($state, $pad);
+                $this->line('', $pad);
+                $this->writeTrafficCname($state, "add it after Pantheon confirms ownership; check with \"terminus gcdn:verify {$siteEnv} {$hostname}\"", $pad);
+                $this->writeErrors($state, $pad);
+                $this->line('');
+                return false;
+        }
+    }
+
+    private function writeTrafficCname(ChallengeState $state, string $when, string $pad): void
+    {
+        $target = $state->trafficTarget();
+        if ($target === null) {
+            $this->line($this->paint('Traffic record: couldn\'t determine the target. Run "terminus gcdn:dns" for this environment.', 'red'), $pad);
             return;
         }
-
-        // The environment lives in a single GCDN zone, so any domain's
-        // recommended CNAME target identifies the zone for all of them.
-        $envZone = null;
-        foreach ($eligible as $domainInfo) {
-            $envZone = $this->zoneForDomain($domainInfo);
-            if ($envZone !== null) {
-                break;
-            }
-        }
-
-        $this->output()->writeln('');
-        $this->output()->writeln(
-            self::CYAN . self::BOLD . '=== Orange-to-Orange (O2O) records — ' . $site->getName()
-            . '.' . $env->getName() . ' ===' . self::RESET
-        );
-        $this->output()->writeln('Add these records in the Cloudflare zone that currently serves the domain.');
-        $this->output()->writeln('');
-
-        foreach ($eligible as $domainInfo) {
-            $this->renderDomain($domainInfo, $envZone);
-        }
-    }
-
-    /**
-     * Determines the GCDN zone from a domain's recommended CNAME target.
-     * Prefers target_dns, which is populated even before the domain exists
-     * in public DNS; dns_status_details.dns_records only reflects records
-     * detected on live DNS.
-     */
-    private function zoneForDomain($domainInfo): ?string
-    {
-        $recordSets = [];
-        if (!empty($domainInfo->target_dns) && is_array($domainInfo->target_dns)) {
-            $recordSets[] = $domainInfo->target_dns;
-        }
-        if (!empty($domainInfo->dns_status_details) && !empty($domainInfo->dns_status_details->dns_records)) {
-            $recordSets[] = $domainInfo->dns_status_details->dns_records;
-        }
-
-        foreach ($recordSets as $records) {
-            foreach ($records as $record) {
-                if (!is_object($record)) {
-                    continue;
-                }
-                $value = $record->target_value ?? $record->value ?? $record->recommended_value ?? '';
-                $zone = DcvZones::zoneFromCnameTarget((string) $value);
-                if ($zone !== null) {
-                    return $zone;
-                }
-            }
-        }
-        return null;
-    }
-
-    /**
-     * Renders the per-hostname O2O record set: ownership TXT, DCV
-     * delegation CNAME, and traffic CNAME.
-     */
-    private function renderDomain($domainInfo, ?string $envZone)
-    {
-        $hostname = $domainInfo->id;
-        $zone = $this->zoneForDomain($domainInfo) ?? $envZone;
-
-        $this->output()->writeln(self::YELLOW . $hostname . self::RESET . ($zone !== null ? "  (zone: {$zone})" : ''));
-        $this->output()->writeln('------');
-
-        // Step 3: hostname ownership TXT.
-        $challenges = $domainInfo->challenges ?? null;
-        $verified = is_object($challenges) && !empty($challenges->verified) && $challenges->verified === true;
-        $ownershipKey = null;
-        $ownershipValue = null;
-        if (is_object($challenges) && !empty($challenges->ownership_txt)) {
-            $ownershipKey = $challenges->ownership_txt->key ?? null;
-            $ownershipValue = $challenges->ownership_txt->val ?? null;
-        }
-        if (
-            $ownershipKey === null
-            && !empty($domainInfo->acme_preauthorization_challenges)
-            && !empty($domainInfo->acme_preauthorization_challenges->{'dns-01'})
-        ) {
-            $dnsChallenge = $domainInfo->acme_preauthorization_challenges->{'dns-01'};
-            $ownershipKey = $dnsChallenge->ownership_key ?? null;
-            $ownershipValue = $dnsChallenge->ownership_value ?? null;
-        }
-
-        if ($verified) {
-            $this->output()->writeln('  Hostname ownership: ' . self::GREEN . 'already verified' . self::RESET . ' — no TXT record needed.');
-        } elseif ($ownershipKey !== null && $ownershipValue !== null) {
-            $this->output()->writeln('  TXT — hostname ownership verification (removable once verified):');
-            $this->output()->writeln("    Name:  {$ownershipKey}");
-            $this->output()->writeln("    Value: {$ownershipValue}");
-        } else {
-            $this->output()->writeln(self::RED . '  Ownership TXT challenge unavailable — run "terminus gcdn:verify" for this domain to generate it.' . self::RESET);
-        }
-        $this->output()->writeln('');
-
-        // DCV delegation CNAME.
-        $dcvTarget = $zone !== null ? DcvZones::dcvTarget($hostname, $zone) : null;
-        if ($dcvTarget !== null) {
-            $this->output()->writeln('  CNAME — DCV delegation for certificate issuance + renewal (' . self::BOLD . 'DNS only / grey cloud' . self::RESET . '):');
-            $this->output()->writeln("    Name:  _acme-challenge.{$hostname}");
-            $this->output()->writeln("    Value: {$dcvTarget}.");
-            $this->output()->writeln("    Delete any existing _acme-challenge.{$hostname} TXT records first — they conflict with this CNAME.");
-            $this->output()->writeln(self::YELLOW . '    Keep this record permanently — removing it breaks certificate renewal.' . self::RESET);
-        } elseif ($zone !== null) {
-            $this->output()->writeln(self::RED . "  Unknown GCDN zone \"{$zone}\" — no DCV delegation ID on file. Update DcvZones in the terminus-gcdn-plugin." . self::RESET);
-        } else {
-            $this->output()->writeln(self::RED . '  Could not determine the GCDN zone (no fe.<zone>.edge.pantheon.io CNAME recommendation found) — cannot build the DCV delegation record.' . self::RESET);
-        }
-        $this->output()->writeln('');
-
-        // Traffic CNAME.
-        $trafficTarget = $zone !== null ? "fe.{$zone}.edge.pantheon.io" : null;
-        if ($trafficTarget !== null) {
-            $this->output()->writeln('  CNAME — traffic (add ' . self::BOLD . 'LAST' . self::RESET . ', after ownership is verified and the certificate is active; Proxied or DNS only):');
-            $this->output()->writeln("    Name:  {$hostname}");
-            $this->output()->writeln("    Value: {$trafficTarget}.");
-        } else {
-            $this->output()->writeln(self::RED . '  Could not determine the traffic CNAME target — run "terminus gcdn:dns" for this environment.' . self::RESET);
-        }
-        $this->output()->writeln('');
+        $this->line($this->paint('CNAME record — traffic', 'bold') . " ({$when}):", $pad);
+        $this->line("  Name:  {$state->hostname()}", $pad);
+        $this->line("  Value: {$target}.", $pad);
     }
 }

@@ -7,7 +7,7 @@ use Pantheon\TerminusGCDN\Commands\UpgradeCommand;
 use Pantheon\TerminusGCDN\Tests\Support\CommandHarness;
 
 /**
- * gcdn:upgrade, pinned to the behavior at 0.4.0.
+ * gcdn:upgrade.
  *
  * Titan's `POST sites/{id}/workflows` answers 202 on success. Its errors are
  * bare JSON strings ("Bad params\n", "Forbidden\n", "Conflict\n"), and a
@@ -63,33 +63,50 @@ final class UpgradeCommandTest extends CommandHarness
         }
     }
 
-    /** U1: any error message containing "cloudflare" counts as "already migrated", and the run continues. */
-    public function testU1CloudflareErrorIsReportedAsAlreadyMigrated(): void
+    /** U1: an error mentioning "cloudflare" fails the command; no converge, no "complete". */
+    public function testU1CloudflareErrorFails(): void
     {
-        $this->assertNull($this->upgrade('my-site', $this->apiResult(422, (object) ['message' => 'Failed to create Cloudflare custom hostname'])));
-        $log = $this->logger->text();
-        $this->assertStringContainsString('Site already migrated to new-gcdn.', $log);
-        $this->assertStringContainsString('GCDN upgrade complete', $log);
-        $this->assertCount(2, $this->writes(), 'converge_site still POSTed');
+        try {
+            $this->upgrade('my-site', $this->apiResult(422, (object) ['message' => 'Failed to create Cloudflare custom hostname']));
+            $this->fail('expected exception');
+        } catch (TerminusException $e) {
+            $this->assertSame('Failed to migrate my-site to new-gcdn: HTTP 422: Failed to create Cloudflare custom hostname', $e->getMessage());
+        }
+        $this->assertCount(1, $this->writes(), 'no converge after a failed migration');
+        $this->assertStringNotContainsString('already migrated', $this->logger->text());
+        $this->assertStringNotContainsString('upgrade complete', $this->logger->text());
     }
 
-    /** U1: "already" matches unrelated errors. */
-    public function testU1AlreadyInProgressIsReportedAsAlreadyMigrated(): void
+    /** U1: "already" in an unrelated error fails too. */
+    public function testU1AlreadyInProgressFails(): void
     {
+        $this->expectException(TerminusException::class);
+        $this->expectExceptionMessage('HTTP 400: A cdn_migration workflow is already in progress');
         $this->upgrade('my-site', $this->apiResult(400, (object) ['message' => 'A cdn_migration workflow is already in progress']));
-        $this->assertStringContainsString('Site already migrated', $this->logger->text());
     }
 
-    /** U2: titan's string error bodies are dropped, leaving only "HTTP <code>". */
-    public function testU2StringErrorBodyIsDropped(): void
+    /** U2: titan's string error bodies are kept. */
+    public function testU2StringErrorBodyIsKept(): void
     {
         try {
             $this->upgrade('my-site', $this->apiResult(400, "Bad params\n"));
             $this->fail('expected exception');
         } catch (TerminusException $e) {
-            $this->assertSame('Failed to migrate my-site to new-gcdn: HTTP 400', $e->getMessage());
+            $this->assertSame('Failed to migrate my-site to new-gcdn: HTTP 400: Bad params', $e->getMessage());
         }
-        $this->assertCount(1, $this->writes(), 'no converge after a failed migration');
+        $this->assertCount(1, $this->writes());
+    }
+
+    public function testHtmlAndEmptyBodiesGiveTheStatusOnly(): void
+    {
+        foreach (['<html><body>502 Bad Gateway</body></html>', '', null] as $body) {
+            try {
+                $this->upgrade('my-site', $this->apiResult(501, $body));
+                $this->fail('expected exception');
+            } catch (TerminusException $e) {
+                $this->assertSame('Failed to migrate my-site to new-gcdn: HTTP 501', $e->getMessage());
+            }
+        }
     }
 
     /** U3: `site.env` still migrates dev, test and live, with no confirmation. Separate ticket. */

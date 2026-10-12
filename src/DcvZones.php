@@ -18,10 +18,10 @@ final class DcvZones
      * one of these zones; the ID appears in the public DCV CNAME target,
      * so these values are not secret.
      *
-     * Interim approach: this map must be updated (and the plugin released)
-     * if a zone is added or a DCV UUID changes. EDRT-9378 tracks serving
-     * the DCV target from the domains API instead, at which point this
-     * class can be deleted.
+     * The domains API now serves `challenges.dcv_delegation` (EDRT-9618),
+     * which ChallengeState prefers. Keep this table anyway: hostnames
+     * verified before EDRT-9618 never poll again, so they never get the API
+     * value. Update it (and release) when a customer zone is added.
      */
     public const DCV_IDS = [
         'cfp1c' => 'dc5ecddca9c0e249',
@@ -42,10 +42,15 @@ final class DcvZones
 
     /**
      * Builds the DCV delegation CNAME target for a hostname on a zone, or
-     * null if the zone has no known DCV ID.
+     * null if the zone has no known DCV ID. Wildcards get null too: their
+     * delegation name isn't confirmed, and `*.example.com.<id>` isn't a
+     * valid target (P11).
      */
     public static function dcvTarget(string $hostname, string $zone): ?string
     {
+        if (strpos($hostname, '*') !== false) {
+            return null;
+        }
         $dcvId = self::DCV_IDS[strtolower($zone)] ?? null;
         if ($dcvId === null) {
             return null;

@@ -1,0 +1,81 @@
+{
+    "id": "candidate.example.com",
+    "type": "custom",
+    "status": "okay",
+    "cdn": "cloudflare",
+    "verify_method": "txt",
+    "target_dns": [
+        {
+            "type": "CNAME",
+            "target_value": "fe.cfp1c.edge.pantheon.io",
+            "detected_value": "",
+            "status": "",
+            "status_message": ""
+        },
+        {
+            "type": "A",
+            "target_value": "104.18.1.1",
+            "detected_value": "",
+            "status": "",
+            "status_message": ""
+        },
+        {
+            "type": "AAAA",
+            "target_value": "2606:4700::6812:101",
+            "detected_value": "",
+            "status": "",
+            "status_message": ""
+        }
+    ],
+    "dns_status_details": {
+        "dns_records": [
+            {
+                "type": "A",
+                "target_value": "104.18.1.1",
+                "detected_value": "172.67.1.1",
+                "status": "action_required",
+                "status_message": ""
+            },
+            {
+                "type": "AAAA",
+                "target_value": "2606:4700::6812:101",
+                "detected_value": "2606:4700:3030::ac43:101",
+                "status": "action_required",
+                "status_message": ""
+            }
+        ]
+    },
+    "challenges": {
+        "ready": true,
+        "verified": false,
+        "ownership_txt": {
+            "key": "_cf-custom-hostname.candidate.example.com",
+            "val": "0b1c2d3e-own-53c52c38"
+        },
+        "ownership_http": {
+            "key": "http://candidate.example.com/.well-known/cf-custom-hostname-challenge/0b1c2d3e",
+            "val": "0b1c2d3e-own-53c52c38"
+        },
+        "ownership_errors": [
+            "None of the A or AAAA records are owned by this account and the pre-generated ownership verification token was not found.",
+            "The hostname is using Cloudflare and cannot be activated with an TXT or HTTP validation token. To activate the custom hostname, the DNS target needs to point to the SaaS zone"
+        ],
+        "cert_txt": {
+            "key": "_acme-challenge.candidate.example.com",
+            "val": "cert-token-bd8603f8"
+        },
+        "cert_http": {
+            "key": "http://candidate.example.com/.well-known/acme-challenge/abc123",
+            "val": "abc123.def456"
+        },
+        "display_dns_records": false,
+        "cloudflare_status": "pending",
+        "cloudflare_ssl_status": "pending_validation",
+        "cloudflare_status_observed_at": "2026-10-11T18:04:05Z",
+        "dcv_delegation": {
+            "key": "_acme-challenge.candidate.example.com",
+            "val": "candidate.example.com.dc5ecddca9c0e249.dcv.cloudflare.com"
+        },
+        "cloudflare_routed_o2o_candidate": true
+    }
+}

@@ -128,6 +128,23 @@ terminus gcdn:update
 
 This checks the latest release on GitHub and runs the update automatically.
 
+## Development
+
+Requires Terminus 3.2 or later. The tests run offline: every command test fails on any HTTP call it didn't script.
+
+```
+composer install
+composer test
+```
+
+CI runs the suite on PHP 8.2 and 8.5 against Terminus 3.2.0, the latest 3.x, 4.0.0 and the latest 4.x. To try another Terminus locally:
+
+```
+composer require --dev --no-update "pantheon-systems/terminus:3.2.0" && composer update
+```
+
+Before tagging a release, set `VERSION` in `src/Commands/UpdatePluginCommand.php` to the tag; CI fails a tag that doesn't match.
+
 ## Help
 
 Run `terminus help gcdn:upgrade`, `terminus help gcdn:dns`, `terminus help gcdn:verify`, `terminus help gcdn:challenge`, `terminus help gcdn:o2o`, `terminus help gcdn:bot-bypass`, or `terminus help gcdn:update` for details on each command.

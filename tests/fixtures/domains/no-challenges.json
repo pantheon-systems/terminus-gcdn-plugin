@@ -1,0 +1,55 @@
+{
+    "id": "nochallenges.example.com",
+    "type": "custom",
+    "status": "okay",
+    "cdn": "cloudflare",
+    "verify_method": "txt",
+    "target_dns": [
+        {
+            "type": "CNAME",
+            "target_value": "fe.cfp1c.edge.pantheon.io",
+            "detected_value": "",
+            "status": "",
+            "status_message": ""
+        },
+        {
+            "type": "A",
+            "target_value": "104.18.1.1",
+            "detected_value": "",
+            "status": "",
+            "status_message": ""
+        },
+        {
+            "type": "AAAA",
+            "target_value": "2606:4700::6812:101",
+            "detected_value": "",
+            "status": "",
+            "status_message": ""
+        }
+    ],
+    "dns_status_details": {
+        "dns_records": [
+            {
+                "type": "CNAME",
+                "target_value": "fe.cfp1c.edge.pantheon.io",
+                "detected_value": "",
+                "status": "",
+                "status_message": ""
+            },
+            {
+                "type": "A",
+                "target_value": "104.18.1.1",
+                "detected_value": "151.101.2.133",
+                "status": "action_required",
+                "status_message": ""
+            },
+            {
+                "type": "AAAA",
+                "target_value": "2606:4700::6812:101",
+                "detected_value": "2a04:4e42::645",
+                "status": "action_required",
+                "status_message": ""
+            }
+        ]
+    }
+}

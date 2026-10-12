@@ -68,8 +68,7 @@ class UpdatePluginCommand extends TerminusCommand
         $this->log()->notice('Updating terminus-gcdn-plugin...');
 
         $command = sprintf('terminus self:plugin:update %s', self::COMPOSER_PACKAGE);
-        $exitCode = 0;
-        passthru($command, $exitCode);
+        $exitCode = $this->runProcess($command);
 
         if ($exitCode !== 0) {
             $this->output()->writeln('');
@@ -100,14 +99,7 @@ class UpdatePluginCommand extends TerminusCommand
             self::GITHUB_REPO
         );
 
-        $context = stream_context_create([
-            'http' => [
-                'header' => "User-Agent: terminus-gcdn-plugin\r\nAccept: application/vnd.github.v3+json\r\n",
-                'timeout' => 10,
-            ],
-        ]);
-
-        $json = @file_get_contents($url, false, $context);
+        $json = $this->httpGet($url);
         if ($json === false) {
             return $this->getLatestTagFallback();
         }
@@ -127,14 +119,7 @@ class UpdatePluginCommand extends TerminusCommand
             self::GITHUB_REPO
         );
 
-        $context = stream_context_create([
-            'http' => [
-                'header' => "User-Agent: terminus-gcdn-plugin\r\nAccept: application/vnd.github.v3+json\r\n",
-                'timeout' => 10,
-            ],
-        ]);
-
-        $json = @file_get_contents($url, false, $context);
+        $json = $this->httpGet($url);
         if ($json === false) {
             return null;
         }
@@ -145,5 +130,34 @@ class UpdatePluginCommand extends TerminusCommand
         }
 
         return $data[0]['name'] ?? null;
+    }
+
+    /**
+     * Fetches a GitHub API URL. Returns the body, or false on any failure.
+     * A seam for tests.
+     *
+     * @return string|false
+     */
+    protected function httpGet(string $url)
+    {
+        $context = stream_context_create([
+            'http' => [
+                'header' => "User-Agent: terminus-gcdn-plugin\r\nAccept: application/vnd.github.v3+json\r\n",
+                'timeout' => 10,
+            ],
+        ]);
+
+        return @file_get_contents($url, false, $context);
+    }
+
+    /**
+     * Runs a shell command, streaming its output, and returns its exit code.
+     * A seam for tests.
+     */
+    protected function runProcess(string $command): int
+    {
+        $exitCode = 0;
+        passthru($command, $exitCode);
+        return $exitCode;
     }
 }

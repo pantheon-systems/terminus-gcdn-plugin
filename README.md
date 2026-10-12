@@ -6,7 +6,7 @@ A Terminus plugin for upgrading a site to GCDN with bot protection, managing the
 
 ## Installation
 
-To install this plugin using Terminus 3 or later:
+To install this plugin using Terminus 3.2 or later:
 
 ```
 terminus self:plugin:install pantheon-systems/terminus-gcdn-plugin
@@ -24,28 +24,38 @@ terminus gcdn:upgrade <site>
 
 This migrates the site from Fastly to GCDN across all environments.
 
-### 2. Get your DNS records and TXT verification challenges
+### 2. Get your DNS records
 
 ```
 terminus gcdn:dns <site>.live
 ```
 
-This will show the TXT records needed for domain ownership and certificate validation.
+For each domain this shows its status and the records it needs:
 
-### 3. Add TXT records to your DNS provider
+- **TXT `_cf-custom-hostname.<domain>`:** proves you own the domain. You can remove it once the domain is active.
+- **CNAME `_acme-challenge.<domain>`:** lets Cloudflare issue and renew the certificate (DCV delegation). Set it to DNS only (not proxied) and keep it permanently.
+- **Traffic records:** the CNAME, or the A/AAAA records, that point the domain to Pantheon.
 
-Add the TXT records from step 2 to your DNS provider.
+### 3. Add the TXT and `_acme-challenge` CNAME records
 
-### 4. Verify your domains
+Add them at your DNS provider. Remove any existing `_acme-challenge.<domain>` TXT records first; they conflict with the CNAME.
 
-Wait a few minutes for DNS propagation, then verify each domain. Verification typically takes a few minutes to complete:
+### 4. Verify each domain
 
 ```
 terminus gcdn:verify <site>.live example.com
 terminus gcdn:verify <site>.live www.example.com
 ```
 
-By default, verification uses DNS challenges. To verify using HTTP challenges instead:
+`gcdn:verify` asks Cloudflare to check the domain again now (like **Force Recheck** in the dashboard), then shows its status. Pantheon sees the result within about 10 minutes, so run the command again to see it. A domain is rechecked at most once a minute from your machine, and not at all once it's active. To only show the status, use `--no-recheck`.
+
+The status is one of:
+
+- **Ownership and certificate active:** done. Point DNS to Pantheon if you haven't yet.
+- **DNS records ready (confirmed by Pantheon):** the domain is served through Cloudflare today (your own Cloudflare account or your current host), and Pantheon has confirmed you own it. The command lists the ways to switch DNS. After you switch, run `gcdn:verify` again.
+- **Ownership verified, certificate pending**, or **ownership and certificate pending:** add the records shown, then run `gcdn:verify` again.
+
+To switch certificate validation to HTTP as part of the recheck (not possible while the domain is served through Cloudflare):
 
 ```
 terminus gcdn:verify <site>.live example.com --method=http
@@ -53,17 +63,21 @@ terminus gcdn:verify <site>.live example.com --method=http
 
 ### 5. Update your DNS records
 
-Once verification passes, add the CNAME or A/AAAA records shown in the `gcdn:dns` output to point your domains to the new GCDN edge.
+Once the domain is ready or active, point it to Pantheon with the CNAME or A/AAAA records shown by `gcdn:dns`.
+
+### Exit codes
+
+`gcdn:verify`, `gcdn:dns` and `gcdn:o2o` exit `0` when every domain they report on is active or ready, and `1` when one isn't ready yet, isn't found, or its status is unavailable. `gcdn:challenge` exits `1` when a toggle fails. Scripts can rely on this since 0.5.0.
 
 ## Orange-to-Orange (O2O) migrations
 
-If your domain is already proxied through your own Cloudflare zone (orange-clouded), use the O2O flow instead of the plain TXT verification above:
+If your domain is already proxied through Cloudflare (your own Cloudflare zone, orange-clouded), use the O2O flow:
 
 ```
 terminus gcdn:o2o <site>.live
 ```
 
-This prints the per-domain record set to add in your Cloudflare DNS: the hostname ownership TXT record, the DCV delegation CNAME (which must stay in place permanently and be set to DNS only / grey cloud), and the final traffic CNAME. Pass a domain as a second argument to limit output to one hostname. See the O2O documentation for the surrounding steps (Zone Hold, SSL/TLS encryption mode).
+This prints the per-domain record set to add in the Cloudflare zone that serves the domain today: the hostname ownership TXT record, the DCV delegation CNAME (DNS only / grey cloud, permanent), and the traffic CNAME. The traffic CNAME is ready to switch once Pantheon has confirmed ownership. Pass a domain as a second argument to limit output to one hostname.
 
 ## Certificate challenge method
 
@@ -75,26 +89,26 @@ terminus gcdn:challenge <site>.live example.com --method=http
 terminus gcdn:challenge <site>.live example.com --method=dns
 ```
 
-To switch all unverified Cloudflare domains on an environment at once:
+To switch all eligible Cloudflare domains on an environment at once:
 
 ```
 terminus gcdn:challenge <site>.live --all --method=http
 ```
 
-Verified hostnames are never modified. Hostnames already on the requested method are skipped. The command prints a per-hostname status line and a summary:
+Active domains, and domains whose DNS records are ready, are never modified. HTTP is refused for domains served through Cloudflare today, because the proxy intercepts HTTP validation. Domains already on the requested method are skipped. The command prints a per-domain status line and a summary:
 
 ```
   example.com — switched to HTTP
   www.example.com — skipped (already HTTP)
-  blog.example.com — skipped (verified)
+  blog.example.com — skipped (active)
 
 Summary
-  Toggled:                 1
-  Skipped (verified):      1
-  Skipped (already http):  1
+  Toggled:                  1
+  Skipped (active):         1
+  Skipped (already http):   1
 ```
 
-When set to DNS, the command shows DCV delegation CNAME and TXT records. When set to HTTP, it shows the cutover instructions and serve-file challenge token.
+When set to DNS, the command shows the DCV delegation CNAME and the ownership TXT record. When set to HTTP, it shows the cutover instructions and the serve-file challenge token.
 
 Note: A site converge resets the method to the default for the hostname type (custom → DNS, platform → HTTP).
 
@@ -127,6 +141,23 @@ terminus gcdn:update
 ```
 
 This checks the latest release on GitHub and runs the update automatically.
+
+## Development
+
+Requires Terminus 3.2 or later. The tests run offline: every command test fails on any HTTP call it didn't script.
+
+```
+composer install
+composer test
+```
+
+CI runs the suite on PHP 8.2 and 8.5 against Terminus 3.2.0, the latest 3.x, 4.0.0 and the latest 4.x. To try another Terminus locally:
+
+```
+composer require --dev --no-update "pantheon-systems/terminus:3.2.0" && composer update
+```
+
+Before tagging a release, set `VERSION` in `src/Commands/UpdatePluginCommand.php` to the tag; CI fails a tag that doesn't match.
 
 ## Help
 

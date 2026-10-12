@@ -1,0 +1,68 @@
+{
+    "id": "live-my-site.pantheonsite.io",
+    "type": "platform",
+    "status": "okay",
+    "cdn": "cloudflare",
+    "verify_method": "http",
+    "target_dns": [
+        {
+            "type": "CNAME",
+            "target_value": "fe.cfp1p.edge.pantheon.io",
+            "detected_value": "",
+            "status": "",
+            "status_message": ""
+        },
+        {
+            "type": "A",
+            "target_value": "104.18.1.1",
+            "detected_value": "",
+            "status": "",
+            "status_message": ""
+        },
+        {
+            "type": "AAAA",
+            "target_value": "2606:4700::6812:101",
+            "detected_value": "",
+            "status": "",
+            "status_message": ""
+        }
+    ],
+    "dns_status_details": {
+        "dns_records": [
+            {
+                "type": "CNAME",
+                "target_value": "fe.cfp1p.edge.pantheon.io",
+                "detected_value": "fe.cfp1p.edge.pantheon.io",
+                "status": "okay",
+                "status_message": ""
+            }
+        ]
+    },
+    "challenges": {
+        "ready": true,
+        "verified": false,
+        "ownership_txt": {
+            "key": "_cf-custom-hostname.live-my-site.pantheonsite.io",
+            "val": "0b1c2d3e-own-12ac1105"
+        },
+        "ownership_http": {
+            "key": "http://live-my-site.pantheonsite.io/.well-known/cf-custom-hostname-challenge/0b1c2d3e",
+            "val": "0b1c2d3e-own-12ac1105"
+        },
+        "ownership_errors": [
+            "None of the A or AAAA records are owned by this account and the pre-generated ownership verification token was not found."
+        ],
+        "cert_txt": {
+            "key": "_acme-challenge.live-my-site.pantheonsite.io",
+            "val": "cert-token-b12e6dfd"
+        },
+        "cert_http": {
+            "key": "http://live-my-site.pantheonsite.io/.well-known/acme-challenge/abc123",
+            "val": "abc123.def456"
+        },
+        "display_dns_records": false,
+        "cloudflare_status": "pending",
+        "cloudflare_ssl_status": "pending_validation",
+        "cloudflare_status_observed_at": "2026-10-11T18:04:05Z"
+    }
+}

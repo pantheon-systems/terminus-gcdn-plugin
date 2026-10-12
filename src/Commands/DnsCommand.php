@@ -8,12 +8,13 @@ use Pantheon\Terminus\Site\SiteAwareInterface;
 use Pantheon\Terminus\Site\SiteAwareTrait;
 use Pantheon\Terminus\Request\RequestAwareInterface;
 use Pantheon\Terminus\Request\RequestAwareTrait;
+use Pantheon\TerminusGCDN\ChallengeState;
 
 /**
  * Class DnsCommand.
  *
- * Shows DNS records and Cloudflare verification challenges for all
- * domains on a Cloudflare-migrated site environment.
+ * Shows DNS records and Cloudflare verification records for every domain on
+ * a site environment. Read-only.
  *
  * @package Pantheon\TerminusGCDN\Commands
  */
@@ -21,17 +22,16 @@ class DnsCommand extends TerminusCommand implements SiteAwareInterface, RequestA
 {
     use SiteAwareTrait;
     use RequestAwareTrait;
+    use DomainOutputTrait;
 
-    // ANSI color codes
-    const YELLOW = "\033[33m";
-    const GREEN = "\033[32m";
-    const RED = "\033[31m";
-    const CYAN = "\033[36m";
-    const RESET = "\033[0m";
-    const BOLD = "\033[1m";
+    /** States that leave a domain waiting on the customer or on Pantheon. */
+    const NOT_READY = [ChallengeState::UNAVAILABLE, ChallengeState::MISSING, ChallengeState::CANDIDATE, ChallengeState::PENDING];
 
     /**
-     * Shows DNS records and Cloudflare verification challenges for a site environment.
+     * Shows DNS records and Cloudflare verification records for a site environment.
+     *
+     * Read-only. Exits 1 when any GCDN domain isn't ready yet or its status
+     * is unavailable.
      *
      * @authorize
      *
@@ -39,7 +39,7 @@ class DnsCommand extends TerminusCommand implements SiteAwareInterface, RequestA
      *
      * @param string $site_env Site & environment in the format `site-name.env`
      *
-     * @usage <site>.<env> Shows DNS and challenge records for all domains on <site>'s <env> environment.
+     * @usage <site>.<env> Shows DNS and verification records for all domains on <site>'s <env> environment.
      *
      * @throws \Pantheon\Terminus\Exceptions\TerminusException
      */
@@ -47,6 +47,7 @@ class DnsCommand extends TerminusCommand implements SiteAwareInterface, RequestA
     {
         $env = $this->getEnv($site_env);
         $site = $this->getSiteById($site_env);
+        $siteEnv = $site->getName() . '.' . $env->getName();
 
         $domainsUrl = sprintf(
             'sites/%s/environments/%s/domains?hydrate[]=as_list&hydrate[]=recommendations',
@@ -65,149 +66,120 @@ class DnsCommand extends TerminusCommand implements SiteAwareInterface, RequestA
 
         $domains = $response->getData();
         if (!is_array($domains) || empty($domains)) {
-            $this->output()->writeln('No domains found on ' . $site->getName() . '.' . $env->getName());
-            return;
+            $this->line("No domains found on {$siteEnv}");
+            return 0;
         }
 
-        $this->output()->writeln('');
-        $this->output()->writeln(
-            self::CYAN . self::BOLD . '=== ' . $site->getName() . ' site on ' . $env->getName()
-            . ' environment hostname dns records ===' . self::RESET
-        );
+        $this->line('');
+        $this->line($this->paint(
+            '=== ' . $site->getName() . ' site on ' . $env->getName() . ' environment hostname dns records ===',
+            'cyan',
+            'bold'
+        ));
 
+        $notReady = [];
         foreach ($domains as $domainInfo) {
             if (!is_object($domainInfo) || empty($domainInfo->id)) {
                 continue;
             }
-            $this->renderDomain($domainInfo);
+            $state = new ChallengeState($domainInfo);
+            $this->renderDomain($state, $domainInfo, $siteEnv);
+            if (in_array($state->state(), self::NOT_READY, true)) {
+                $notReady[] = $state->hostname();
+            }
         }
 
-        $this->output()->writeln('');
+        if ($notReady !== []) {
+            $this->line('Not ready yet: ' . implode(', ', $notReady) . '.');
+            $this->line("Add the records shown, then run \"terminus gcdn:verify {$siteEnv} <domain>\" to recheck.");
+            $this->line('');
+            return 1;
+        }
+        return 0;
     }
 
-    /**
-     * Renders a single domain's DNS and challenge info.
-     */
-    private function renderDomain($domainInfo)
+    private function renderDomain(ChallengeState $state, object $domainInfo, string $siteEnv): void
     {
-        $domain = $domainInfo->id;
-        $cdn = $domainInfo->cdn ?? 'fastly';
-        $type = $domainInfo->type ?? 'custom';
+        $pad = '  ';
+        $this->line($this->paint($state->hostname(), 'yellow'));
+        $this->line('------');
+        $this->line('Type: ' . ($domainInfo->type ?? 'custom'));
+        $this->line('');
 
-        $this->output()->writeln(self::YELLOW . $domain . self::RESET);
-        $this->output()->writeln('------');
-        $this->output()->writeln("Type: {$type}");
-        $this->output()->writeln('');
+        switch ($state->state()) {
+            case ChallengeState::UNAVAILABLE:
+                $this->line($this->paint('Status unavailable: Pantheon couldn\'t read this domain\'s CDN status. Try again shortly.', 'red'), $pad);
+                break;
 
-        // DNS records
-        $matchedTypes = [];
-        if (!empty($domainInfo->dns_status_details) && !empty($domainInfo->dns_status_details->dns_records)) {
-            $this->output()->writeln('DNS Records:');
-            $dnsRecords = [];
-            foreach ($domainInfo->dns_status_details->dns_records as $record) {
-                if (!is_object($record)) {
-                    continue;
+            case ChallengeState::PLATFORM:
+                $this->line('Managed by Pantheon: no DNS records or verification needed.', $pad);
+                break;
+
+            case ChallengeState::FASTLY:
+                $this->line('Not on GCDN (Cloudflare).', $pad);
+                $this->writeTrafficRecords($state, $pad);
+                break;
+
+            case ChallengeState::MISSING:
+                $this->line($this->paint('Cloudflare status not available yet. Try again shortly.', 'yellow'), $pad);
+                $this->writeTrafficRecords($state, $pad);
+                break;
+
+            case ChallengeState::ACTIVE:
+                $this->line('Cloudflare: ' . $this->paint('ownership and certificate active', 'green'), $pad);
+                $this->line('', $pad);
+                $this->writeTrafficRecords($state, $pad);
+                $this->line('', $pad);
+                $this->writeDcv($state, $pad);
+                break;
+
+            case ChallengeState::READY:
+                $this->line('Cloudflare: ' . $this->paint('DNS records ready (confirmed by Pantheon)', 'green'), $pad);
+                $this->writeCloudflareStatus($state, $pad);
+                $this->writeZoneHold($state, $pad);
+                $this->line('', $pad);
+                $this->writeOwnershipTxt($state, 'keep it until the domain is active', $pad);
+                $this->line('', $pad);
+                $this->writeDcv($state, $pad);
+                $this->line('', $pad);
+                $this->writeTrafficRecords($state, $pad);
+                $this->line('', $pad);
+                $this->line('Served through Cloudflare today. For the ways to switch DNS, run:', $pad);
+                $this->line("  terminus gcdn:verify {$siteEnv} {$state->hostname()}", $pad);
+                break;
+
+            case ChallengeState::CANDIDATE:
+                $this->line('Cloudflare: ' . $this->paint('ownership not confirmed yet', 'red') . ' (served through Cloudflare today)', $pad);
+                $this->writeCloudflareStatus($state, $pad);
+                $this->writeZoneHold($state, $pad);
+                $this->line('', $pad);
+                $this->writeOwnershipTxt($state, 'add this', $pad);
+                $this->line('', $pad);
+                $this->writeDcv($state, $pad);
+                $this->line('', $pad);
+                $this->line($this->paint('Don\'t switch DNS yet: Pantheon hasn\'t confirmed ownership.', 'yellow'), $pad);
+                $this->writeTrafficRecords($state, $pad);
+                $this->writeErrors($state, $pad);
+                $this->line("Cloudflare-to-Cloudflare steps: terminus gcdn:o2o {$siteEnv} {$state->hostname()}", $pad);
+                break;
+
+            default:
+                $this->line('Cloudflare: ' . ($state->ownershipDoneCertPending()
+                    ? $this->paint('ownership verified, certificate pending', 'yellow')
+                    : $this->paint('ownership and certificate pending', 'red')), $pad);
+                $this->writeCloudflareStatus($state, $pad);
+                $this->writeZoneHold($state, $pad);
+                $this->line('', $pad);
+                if (!$state->ownershipDoneCertPending()) {
+                    $this->writeOwnershipTxt($state, 'add this', $pad);
+                    $this->line('', $pad);
                 }
-                $rType = $record->type ?? $record->record_type ?? '';
-                $value = $record->value ?? $record->recommended_value ?? $record->target_value ?? '';
-                $detected = $record->detected_value ?? $record->current_value ?? '';
-                $status = $record->status ?? '';
-                $detectedMatches = !empty($detected) && strcasecmp(trim($detected), trim($value)) === 0;
-
-                if ($detectedMatches) {
-                    $matchedTypes[] = $rType;
-                }
-
-                $line = "  {$rType}: {$value}";
-                if ($detected) {
-                    $line .= " (current: {$detected})";
-                }
-                if ($status === 'action_required') {
-                    if ($detectedMatches) {
-                        $line .= self::YELLOW . ' [propagating verification]' . self::RESET;
-                    } else {
-                        $line .= self::RED . ' [action required]' . self::RESET;
-                    }
-                } elseif ($status) {
-                    $line .= " [{$status}]";
-                }
-                $this->output()->writeln($line);
-            }
-
-            $allThreeMatch = in_array('CNAME', $matchedTypes) && in_array('A', $matchedTypes) && in_array('AAAA', $matchedTypes);
-            if ($allThreeMatch) {
-                $this->output()->writeln('');
-                $this->output()->writeln(self::YELLOW . '  Caution: Both CNAME and A/AAAA records are configured. Use either a CNAME or A/AAAA records — not both.' . self::RESET);
-            } elseif ($type === 'custom') {
-                $this->output()->writeln(self::CYAN . '  Note: Use either A/AAAA records OR a CNAME — not both.' . self::RESET);
-            }
+                $this->writeDcv($state, $pad);
+                $this->line('', $pad);
+                $this->writeTrafficRecords($state, $pad);
+                $this->writeErrors($state, $pad);
+                break;
         }
-
-        // Skip challenges for non-Cloudflare domains
-        if (!in_array($cdn, ['cloudflare', 'both'])) {
-            $this->output()->writeln('');
-            return;
-        }
-
-        // Cloudflare challenges
-        $hasChallenges = false;
-        if (!empty($domainInfo->challenges)) {
-            $challenges = $domainInfo->challenges;
-            $verified = !empty($challenges->verified) && $challenges->verified === true;
-
-            if ($verified) {
-                $this->output()->writeln('  Cloudflare ownership: ' . self::GREEN . 'verified' . self::RESET);
-            } else {
-                $this->output()->writeln('  Cloudflare ownership: ' . self::RED . 'not verified' . self::RESET);
-
-                if (!empty($challenges->ownership_txt)) {
-                    $this->output()->writeln('');
-                    $this->output()->writeln('  TXT Record — Domain Ownership:');
-                    $this->output()->writeln("    Name:  {$challenges->ownership_txt->key}");
-                    $this->output()->writeln("    Value: {$challenges->ownership_txt->val}");
-                    $hasChallenges = true;
-                }
-
-                if (!empty($challenges->cert_txt)) {
-                    $this->output()->writeln('');
-                    $this->output()->writeln('  TXT Record — Certificate Validation:');
-                    $this->output()->writeln("    Name:  {$challenges->cert_txt->key}");
-                    $this->output()->writeln("    Value: {$challenges->cert_txt->val}");
-                    $hasChallenges = true;
-                }
-
-                if (!empty($challenges->ownership_errors)) {
-                    $this->output()->writeln('');
-                    foreach ($challenges->ownership_errors as $err) {
-                        $this->output()->writeln(self::RED . "  Warning: {$err}" . self::RESET);
-                    }
-                }
-            }
-        }
-
-        // Legacy challenges fallback
-        if (
-            !$hasChallenges
-            && !empty($domainInfo->acme_preauthorization_challenges)
-            && !empty($domainInfo->acme_preauthorization_challenges->{'dns-01'})
-        ) {
-            $dnsChallenge = $domainInfo->acme_preauthorization_challenges->{'dns-01'};
-
-            if (!empty($dnsChallenge->ownership_key) && !empty($dnsChallenge->ownership_value)) {
-                $this->output()->writeln('');
-                $this->output()->writeln('  TXT Record — Domain Ownership:');
-                $this->output()->writeln("    Name:  {$dnsChallenge->ownership_key}");
-                $this->output()->writeln("    Value: {$dnsChallenge->ownership_value}");
-            }
-
-            if (!empty($dnsChallenge->verification_key) && !empty($dnsChallenge->verification_value)) {
-                $this->output()->writeln('');
-                $this->output()->writeln('  TXT Record — Certificate Validation:');
-                $this->output()->writeln("    Name:  {$dnsChallenge->verification_key}");
-                $this->output()->writeln("    Value: {$dnsChallenge->verification_value}");
-            }
-        }
-
-        $this->output()->writeln('');
+        $this->line('');
     }
 }

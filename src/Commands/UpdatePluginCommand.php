@@ -16,16 +16,12 @@ use Pantheon\Terminus\Helpers\LocalMachineHelper;
  */
 class UpdatePluginCommand extends TerminusCommand
 {
-    const VERSION = '0.4.0';
+    use DomainOutputTrait;
+
+    const VERSION = '0.5.0-beta.1';
     const GITHUB_REPO = 'pantheon-systems/terminus-gcdn-plugin';
     const COMPOSER_PACKAGE = 'pantheon-systems/terminus-gcdn-plugin';
 
-    const YELLOW = "\033[33m";
-    const GREEN = "\033[32m";
-    const RED = "\033[31m";
-    const CYAN = "\033[36m";
-    const RESET = "\033[0m";
-    const BOLD = "\033[1m";
 
     /**
      * Checks for a newer version of the GCDN plugin and updates it.
@@ -52,30 +48,27 @@ class UpdatePluginCommand extends TerminusCommand
 
         if (version_compare($latestVersion, $currentVersion, '<=')) {
             $this->output()->writeln(
-                self::GREEN . 'terminus-gcdn-plugin is up to date (v' . $currentVersion . ').' . self::RESET
+                $this->paint('terminus-gcdn-plugin is up to date (v' . $currentVersion . ').', 'green')
             );
             return;
         }
 
         $this->output()->writeln(
-            self::CYAN . 'Update available: '
-            . self::BOLD . 'v' . $currentVersion . self::RESET
-            . self::CYAN . ' → '
-            . self::BOLD . 'v' . $latestVersion . self::RESET
+            $this->paint('Update available: ', 'cyan')
+            . $this->paint('v' . $currentVersion, 'bold')
+            . $this->paint(' → ', 'cyan')
+            . $this->paint('v' . $latestVersion, 'bold')
         );
         $this->output()->writeln('');
 
         $this->log()->notice('Updating terminus-gcdn-plugin...');
 
         $command = sprintf('terminus self:plugin:update %s', self::COMPOSER_PACKAGE);
-        $exitCode = 0;
-        passthru($command, $exitCode);
+        $exitCode = $this->runProcess($command);
 
         if ($exitCode !== 0) {
             $this->output()->writeln('');
-            $this->output()->writeln(
-                self::RED . 'Automatic update failed.' . self::RESET
-            );
+            $this->output()->writeln($this->paint('Automatic update failed.', 'red'));
             $this->output()->writeln('Try manually:');
             $this->output()->writeln("  terminus self:plugin:update " . self::COMPOSER_PACKAGE);
             $this->output()->writeln('Or reinstall:');
@@ -85,9 +78,7 @@ class UpdatePluginCommand extends TerminusCommand
         }
 
         $this->output()->writeln('');
-        $this->output()->writeln(
-            self::GREEN . 'Updated to v' . $latestVersion . '.' . self::RESET
-        );
+        $this->output()->writeln($this->paint('Updated to v' . $latestVersion . '.', 'green'));
     }
 
     /**
@@ -100,14 +91,7 @@ class UpdatePluginCommand extends TerminusCommand
             self::GITHUB_REPO
         );
 
-        $context = stream_context_create([
-            'http' => [
-                'header' => "User-Agent: terminus-gcdn-plugin\r\nAccept: application/vnd.github.v3+json\r\n",
-                'timeout' => 10,
-            ],
-        ]);
-
-        $json = @file_get_contents($url, false, $context);
+        $json = $this->httpGet($url);
         if ($json === false) {
             return $this->getLatestTagFallback();
         }
@@ -127,14 +111,7 @@ class UpdatePluginCommand extends TerminusCommand
             self::GITHUB_REPO
         );
 
-        $context = stream_context_create([
-            'http' => [
-                'header' => "User-Agent: terminus-gcdn-plugin\r\nAccept: application/vnd.github.v3+json\r\n",
-                'timeout' => 10,
-            ],
-        ]);
-
-        $json = @file_get_contents($url, false, $context);
+        $json = $this->httpGet($url);
         if ($json === false) {
             return null;
         }
@@ -145,5 +122,34 @@ class UpdatePluginCommand extends TerminusCommand
         }
 
         return $data[0]['name'] ?? null;
+    }
+
+    /**
+     * Fetches a GitHub API URL. Returns the body, or false on any failure.
+     * A seam for tests.
+     *
+     * @return string|false
+     */
+    protected function httpGet(string $url)
+    {
+        $context = stream_context_create([
+            'http' => [
+                'header' => "User-Agent: terminus-gcdn-plugin\r\nAccept: application/vnd.github.v3+json\r\n",
+                'timeout' => 10,
+            ],
+        ]);
+
+        return @file_get_contents($url, false, $context);
+    }
+
+    /**
+     * Runs a shell command, streaming its output, and returns its exit code.
+     * A seam for tests.
+     */
+    protected function runProcess(string $command): int
+    {
+        $exitCode = 0;
+        passthru($command, $exitCode);
+        return $exitCode;
     }
 }

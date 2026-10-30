@@ -167,13 +167,14 @@ final class UABypassResponseTest extends TestCase
     {
         $message = UABypassResponse::errorMessage(404, '<html>not found</html>', self::SITE_ENV, self::HOST, 'list');
 
-        $this->assertStringContainsString('not available yet', $message);
+        $this->assertStringContainsString('not available for this site yet', $message);
+        $this->assertStringContainsString('contact Pantheon support', $message);
     }
 
     public function testUnknownStatusFallsBack(): void
     {
         $this->assertSame(
-            'Could not change User-Agent bypass entries (HTTP 418).',
+            'Could not remove User-Agent bypass entries (HTTP 418).',
             UABypassResponse::errorMessage(418, null, self::SITE_ENV, self::HOST, 'remove')
         );
         $this->assertSame(

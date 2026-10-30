@@ -138,7 +138,7 @@ terminus gcdn:ua-bypass:remove <site>.<env> <domain> "<user-agent>"
 
 - Without `--hostname`, `list` checks every custom domain of the environment (up to 50).
 
-- Saved changes reach the edge asynchronously.
+- Saved changes may take a few minutes to take effect.
 
 ## Updating the plugin
 

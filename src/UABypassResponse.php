@@ -20,7 +20,14 @@ final class UABypassResponse
 {
     public const ENTRY_MAX_LENGTH = 256;
 
-    public const MALFORMED_MESSAGE = 'Unexpected response from the User-Agent bypass service.';
+    /**
+     * Entries per hostname; mirrors policy-docs' cap so the limit message can
+     * name the number.
+     */
+    public const ENTRY_LIMIT = 8;
+
+    public const MALFORMED_MESSAGE = 'Unexpected response from the User-Agent bypass service. '
+        . 'Try again; if this persists, contact Pantheon support.';
 
     private const HOSTNAME_MAX_LENGTH = 253;
     private const DNS_LABEL_MAX_LENGTH = 63;
@@ -39,7 +46,8 @@ final class UABypassResponse
             return sprintf('The User-Agent must be at most %d characters.', self::ENTRY_MAX_LENGTH);
         }
         if (!preg_match('/^[\x20-\x7e]+\z/', $entry)) {
-            return 'The User-Agent must be printable ASCII.';
+            return 'The User-Agent must contain only printable ASCII characters '
+                . '(no tabs, line breaks or non-English characters).';
         }
         if (strpbrk($entry, '"\\') !== false) {
             return 'The User-Agent must not contain a double quote or a backslash.';
@@ -122,7 +130,8 @@ final class UABypassResponse
                 );
             case 'hostname_not_provisioned':
                 return sprintf(
-                    '%s is not provisioned on GCDN yet. Try again once its setup has finished.',
+                    '%s is not provisioned on GCDN yet. Try again in a few minutes; '
+                    . 'if this persists, contact Pantheon support.',
                     $hostname
                 );
             case 'hostname_not_cloudflare':
@@ -133,9 +142,10 @@ final class UABypassResponse
                 );
             case 'entry_limit_reached':
                 return sprintf(
-                    '%s already has the maximum number of User-Agent bypass entries. '
+                    '%s already has the maximum of %d User-Agent bypass entries. '
                     . 'Remove one with `terminus gcdn:ua-bypass:remove` first.',
-                    $hostname
+                    $hostname,
+                    self::ENTRY_LIMIT
                 );
             case 'rate_limited':
                 return 'Too many User-Agent bypass changes. Wait a minute and try again.';
@@ -151,13 +161,10 @@ final class UABypassResponse
             case 403:
                 return sprintf('You do not have access to %s.', $siteEnv);
             case 404:
-                return 'User-Agent bypass is not available yet. The service is still rolling out; try again later.';
+                return 'The User-Agent bypass service is not available for this site yet, or could not be reached. '
+                    . 'If this persists, contact Pantheon support.';
             default:
-                return sprintf(
-                    'Could not %s User-Agent bypass entries (HTTP %d).',
-                    $action === 'list' ? 'list' : 'change',
-                    $status
-                );
+                return sprintf('Could not %s User-Agent bypass entries (HTTP %d).', $action, $status);
         }
     }
 

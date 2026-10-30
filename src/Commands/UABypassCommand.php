@@ -36,7 +36,8 @@ class UABypassCommand extends TerminusCommand implements SiteAwareInterface, Req
      * Lists the User-Agent bypass entries of an environment's domains.
      *
      * Without --hostname, every custom domain of the environment is checked
-     * (up to 50). Domains without entries are not shown.
+     * (up to 50). Wildcard domains are skipped, and domains without entries
+     * are not shown.
      *
      * @authorize
      *
@@ -103,11 +104,15 @@ class UABypassCommand extends TerminusCommand implements SiteAwareInterface, Req
      * and must be updated whenever the client's version string changes. Quote
      * the value in your shell. Other bot protections still apply.
      *
+     * An entry is 1 to 256 printable ASCII characters, with no double quote or
+     * backslash and no leading or trailing space. A domain can have up to 8
+     * entries.
+     *
      * An entry that looks like a web browser's User-Agent is refused, because
      * any bot imitating that browser would also skip the challenge. Pass
      * --allow-browser-ua to add one anyway after confirming.
      *
-     * Changes reach the edge asynchronously after they are saved.
+     * Saved changes may take a few minutes to take effect.
      *
      * @authorize
      *
@@ -230,7 +235,7 @@ class UABypassCommand extends TerminusCommand implements SiteAwareInterface, Req
     private function logSaved(string $hostname, array $entries): void
     {
         $this->log()->notice(
-            'Saved. {hostname} now has {count} User-Agent bypass {noun}; the change reaches the edge asynchronously.',
+            'Saved. {hostname} now has {count} User-Agent bypass {noun}. The change may take a few minutes to take effect.',
             [
                 'hostname' => $hostname,
                 'count' => count($entries),

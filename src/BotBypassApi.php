@@ -72,28 +72,9 @@ class BotBypassApi
 
     /**
      * Builds the absolute base URI for the bot-bypass service.
-     *
-     * Same resolution as core's SecretsApi so the command works against a
-     * sandbox: honours papi_* overrides, rewrites a hermes sandbox host to
-     * its pantheonapi counterpart, and falls back to the production host.
      */
     private function getBaseURI(): string
     {
-        $config = $this->request->getConfig();
-
-        $protocol = $config->get('papi_protocol') ?? $config->get('protocol');
-        $port = $config->get('papi_port') ?? $config->get('port');
-        $host = $config->get('papi_host');
-        if (!$host && strpos((string) $config->get('host'), 'hermes.sandbox-') !== false) {
-            $host = str_replace('hermes', 'pantheonapi', $config->get('host'));
-        }
-        if (!$host && strpos((string) $config->get('host'), 'sandbox-') !== false) {
-            $host = $config->get('host');
-        }
-        if (!$host) {
-            $host = 'terminus.pantheon.io';
-        }
-
-        return sprintf('%s://%s:%s/bot-bypass/v1', $protocol, $host, $port);
+        return PantheonApiUri::base($this->request->getConfig(), 'bot-bypass/v1');
     }
 }

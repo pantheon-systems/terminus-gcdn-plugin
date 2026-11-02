@@ -118,6 +118,28 @@ terminus gcdn:bot-bypass <site> --format=json
 
 Treat these tokens as secrets. Do not commit them or paste them into shared logs. If the token service is unavailable, Terminus retries for up to about a minute before reporting the failure.
 
+## User-Agent bypass entries
+
+When a monitor or tool cannot send a bot-bypass token, you can exempt it by its User-Agent instead. Requests whose `User-Agent` header **exactly** equals one of a domain's entries skip the GCDN bot challenge on that domain. Other bot protections still apply.
+
+```
+terminus gcdn:ua-bypass:list <site>.<env> [--hostname=<domain>]
+terminus gcdn:ua-bypass:add <site>.<env> <domain> "<user-agent>" [--allow-browser-ua]
+terminus gcdn:ua-bypass:remove <site>.<env> <domain> "<user-agent>"
+```
+
+- Matching is exact and case-sensitive. Use the client's full User-Agent string, including its version, and update the entry whenever the client's version string changes.
+
+- Entries are per domain and per environment. A domain can have up to 8 entries.
+
+- An entry must be 1 to 256 printable ASCII characters, with no double quote or backslash and no leading or trailing space. Quote it in your shell.
+
+- An entry that looks like a web browser's User-Agent is refused, because any bot imitating that browser would also skip the challenge. If you really need one, `--allow-browser-ua` adds it after you confirm. Removing an entry is never restricted.
+
+- Without `--hostname`, `list` checks every custom domain of the environment (up to 50).
+
+- Saved changes may take a few minutes to take effect.
+
 ## Updating the plugin
 
 Check for and install the latest version:
@@ -130,4 +152,4 @@ This checks the latest release on GitHub and runs the update automatically.
 
 ## Help
 
-Run `terminus help gcdn:upgrade`, `terminus help gcdn:dns`, `terminus help gcdn:verify`, `terminus help gcdn:challenge`, `terminus help gcdn:o2o`, `terminus help gcdn:bot-bypass`, or `terminus help gcdn:update` for details on each command.
+Run `terminus help gcdn:upgrade`, `terminus help gcdn:dns`, `terminus help gcdn:verify`, `terminus help gcdn:challenge`, `terminus help gcdn:o2o`, `terminus help gcdn:bot-bypass`, `terminus help gcdn:ua-bypass:list`, `terminus help gcdn:ua-bypass:add`, `terminus help gcdn:ua-bypass:remove`, or `terminus help gcdn:update` for details on each command.

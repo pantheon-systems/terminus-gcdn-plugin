@@ -1,0 +1,38 @@
+{
+    "id": "nozone.example.com",
+    "type": "custom",
+    "status": "okay",
+    "cdn": "cloudflare",
+    "verify_method": "txt",
+    "target_dns": [],
+    "dns_status_details": {
+        "dns_records": []
+    },
+    "challenges": {
+        "ready": true,
+        "verified": false,
+        "ownership_txt": {
+            "key": "_cf-custom-hostname.nozone.example.com",
+            "val": "0b1c2d3e-own-6eb01cc2"
+        },
+        "ownership_http": {
+            "key": "http://nozone.example.com/.well-known/cf-custom-hostname-challenge/0b1c2d3e",
+            "val": "0b1c2d3e-own-6eb01cc2"
+        },
+        "ownership_errors": [
+            "None of the A or AAAA records are owned by this account and the pre-generated ownership verification token was not found."
+        ],
+        "cert_txt": {
+            "key": "_acme-challenge.nozone.example.com",
+            "val": "cert-token-234756f9"
+        },
+        "cert_http": {
+            "key": "http://nozone.example.com/.well-known/acme-challenge/abc123",
+            "val": "abc123.def456"
+        },
+        "display_dns_records": false,
+        "cloudflare_status": "pending",
+        "cloudflare_ssl_status": "pending_validation",
+        "cloudflare_status_observed_at": "2026-10-11T18:04:05Z"
+    }
+}

@@ -1,0 +1,55 @@
+{
+    "id": "fastly.example.com",
+    "type": "custom",
+    "status": "okay",
+    "cdn": "fastly",
+    "verify_method": "txt",
+    "target_dns": [
+        {
+            "type": "A",
+            "target_value": "23.185.0.2",
+            "detected_value": "",
+            "status": "",
+            "status_message": ""
+        },
+        {
+            "type": "AAAA",
+            "target_value": "2620:12a:8000::2",
+            "detected_value": "",
+            "status": "",
+            "status_message": ""
+        },
+        {
+            "type": "AAAA",
+            "target_value": "2620:12a:8001::2",
+            "detected_value": "",
+            "status": "",
+            "status_message": ""
+        }
+    ],
+    "dns_status_details": {
+        "dns_records": [
+            {
+                "type": "A",
+                "target_value": "23.185.0.2",
+                "detected_value": "151.101.2.133",
+                "status": "action_required",
+                "status_message": ""
+            },
+            {
+                "type": "AAAA",
+                "target_value": "2620:12a:8000::2",
+                "detected_value": "2a04:4e42::645",
+                "status": "action_required",
+                "status_message": ""
+            },
+            {
+                "type": "AAAA",
+                "target_value": "2620:12a:8001::2",
+                "detected_value": "2a04:4e42::645",
+                "status": "action_required",
+                "status_message": ""
+            }
+        ]
+    }
+}

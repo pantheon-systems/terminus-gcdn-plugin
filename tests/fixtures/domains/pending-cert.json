@@ -1,0 +1,87 @@
+{
+    "id": "cert.example.com",
+    "type": "custom",
+    "status": "okay",
+    "cdn": "cloudflare",
+    "verify_method": "txt",
+    "target_dns": [
+        {
+            "type": "CNAME",
+            "target_value": "fe.cfp1c.edge.pantheon.io",
+            "detected_value": "",
+            "status": "",
+            "status_message": ""
+        },
+        {
+            "type": "A",
+            "target_value": "104.18.1.1",
+            "detected_value": "",
+            "status": "",
+            "status_message": ""
+        },
+        {
+            "type": "AAAA",
+            "target_value": "2606:4700::6812:101",
+            "detected_value": "",
+            "status": "",
+            "status_message": ""
+        }
+    ],
+    "dns_status_details": {
+        "dns_records": [
+            {
+                "type": "CNAME",
+                "target_value": "fe.cfp1c.edge.pantheon.io",
+                "detected_value": "",
+                "status": "",
+                "status_message": ""
+            },
+            {
+                "type": "A",
+                "target_value": "104.18.1.1",
+                "detected_value": "151.101.2.133",
+                "status": "action_required",
+                "status_message": ""
+            },
+            {
+                "type": "AAAA",
+                "target_value": "2606:4700::6812:101",
+                "detected_value": "2a04:4e42::645",
+                "status": "action_required",
+                "status_message": ""
+            }
+        ]
+    },
+    "challenges": {
+        "ready": true,
+        "verified": false,
+        "ownership_txt": {
+            "key": "_cf-custom-hostname.cert.example.com",
+            "val": "0b1c2d3e-own-c99cd68f"
+        },
+        "ownership_http": {
+            "key": "http://cert.example.com/.well-known/cf-custom-hostname-challenge/0b1c2d3e",
+            "val": "0b1c2d3e-own-c99cd68f"
+        },
+        "ownership_errors": [],
+        "cert_txt": {
+            "key": "_acme-challenge.cert.example.com",
+            "val": "cert-token-80a542f5"
+        },
+        "cert_http": {
+            "key": "http://cert.example.com/.well-known/acme-challenge/abc123",
+            "val": "abc123.def456"
+        },
+        "display_dns_records": false,
+        "cloudflare_status": "active",
+        "cloudflare_ssl_status": "pending_validation",
+        "cloudflare_status_observed_at": "2026-10-11T18:04:05Z",
+        "dcv_delegation": {
+            "key": "_acme-challenge.cert.example.com",
+            "val": "cert.example.com.dc5ecddca9c0e249.dcv.cloudflare.com"
+        },
+        "cert_errors": [
+            "The certificate authority could not validate _acme-challenge.cert.example.com."
+        ]
+    }
+}

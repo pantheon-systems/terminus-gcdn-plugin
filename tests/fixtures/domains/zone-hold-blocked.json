@@ -1,0 +1,82 @@
+{
+    "id": "held-blocked.example.com",
+    "type": "custom",
+    "status": "okay",
+    "cdn": "cloudflare",
+    "verify_method": "txt",
+    "target_dns": [
+        {
+            "type": "CNAME",
+            "target_value": "fe.cfp1c.edge.pantheon.io",
+            "detected_value": "",
+            "status": "",
+            "status_message": ""
+        },
+        {
+            "type": "A",
+            "target_value": "104.18.1.1",
+            "detected_value": "",
+            "status": "",
+            "status_message": ""
+        },
+        {
+            "type": "AAAA",
+            "target_value": "2606:4700::6812:101",
+            "detected_value": "",
+            "status": "",
+            "status_message": ""
+        }
+    ],
+    "dns_status_details": {
+        "dns_records": [
+            {
+                "type": "A",
+                "target_value": "104.18.1.1",
+                "detected_value": "172.67.1.1",
+                "status": "action_required",
+                "status_message": ""
+            },
+            {
+                "type": "AAAA",
+                "target_value": "2606:4700::6812:101",
+                "detected_value": "2606:4700:3030::ac43:101",
+                "status": "action_required",
+                "status_message": ""
+            }
+        ]
+    },
+    "challenges": {
+        "ready": true,
+        "verified": false,
+        "ownership_txt": {
+            "key": "_cf-custom-hostname.held-blocked.example.com",
+            "val": "0b1c2d3e-own-fd9b5c21"
+        },
+        "ownership_http": {
+            "key": "http://held-blocked.example.com/.well-known/cf-custom-hostname-challenge/0b1c2d3e",
+            "val": "0b1c2d3e-own-fd9b5c21"
+        },
+        "ownership_errors": [
+            "The hostname is associated with a held zone. Please contact the owner of this domain to have the hold removed."
+        ],
+        "cert_txt": {
+            "key": "_acme-challenge.held-blocked.example.com",
+            "val": "cert-token-938309bc"
+        },
+        "cert_http": {
+            "key": "http://held-blocked.example.com/.well-known/acme-challenge/abc123",
+            "val": "abc123.def456"
+        },
+        "display_dns_records": false,
+        "cloudflare_status": "blocked",
+        "cloudflare_ssl_status": "active",
+        "cloudflare_status_observed_at": "2026-10-29T17:46:48Z",
+        "dcv_delegation": {
+            "key": "_acme-challenge.held-blocked.example.com",
+            "val": "held-blocked.example.com.dc5ecddca9c0e249.dcv.cloudflare.com"
+        },
+        "cloudflare_routed_o2o_candidate": true,
+        "ssl_active": true,
+        "zone_hold_detected": true
+    }
+}

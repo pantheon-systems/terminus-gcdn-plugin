@@ -57,21 +57,18 @@ class UpgradeCommand extends TerminusCommand implements SiteAwareInterface, Requ
             ],
         ]);
 
+        // Re-running on a migrated site succeeds (the migration is
+        // idempotent), so any error is a real failure (U1). Titan's error
+        // bodies are usually bare JSON strings, e.g. "Bad params" (U2).
         if ($migrateResponse->isError()) {
-            $data = $migrateResponse->getData();
-            $message = is_object($data) && !empty($data->message) ? $data->message : '';
-
-            if (stripos($message, 'already') !== false || stripos($message, 'cloudflare') !== false) {
-                $this->log()->notice('Site already migrated to new-gcdn.');
-            } else {
-                throw new TerminusException(
-                    'Failed to migrate {site} to new-gcdn: {msg}',
-                    ['site' => $site_id, 'msg' => $message ?: 'HTTP ' . $migrateResponse->getStatusCode()]
-                );
-            }
-        } else {
-            $this->log()->notice('Migration triggered for all environments.');
+            $status = 'HTTP ' . $migrateResponse->getStatusCode();
+            $detail = $this->errorDetail($migrateResponse->getData());
+            throw new TerminusException(
+                'Failed to migrate {site} to new-gcdn: {msg}',
+                ['site' => $site_id, 'msg' => $detail !== '' ? "{$status}: {$detail}" : $status]
+            );
         }
+        $this->log()->notice('Migration triggered for all environments.');
 
         // Step 2: Trigger converge_site to update Route53 for platform hostnames
         $this->log()->notice('Converging site to update DNS...');
@@ -95,5 +92,24 @@ class UpgradeCommand extends TerminusCommand implements SiteAwareInterface, Requ
             'GCDN upgrade complete for {site}. Run "terminus domain:dns {site}.live" to see updated DNS records.',
             ['site' => $site->getName()]
         );
+    }
+
+    /**
+     * The message in an error body: a string, or an object's `message`.
+     * HTML pages (a proxy error) are dropped, and long text is cut.
+     */
+    private function errorDetail($data): string
+    {
+        if (is_object($data) && isset($data->message) && is_scalar($data->message)) {
+            $detail = trim((string) $data->message);
+        } elseif (is_string($data)) {
+            $detail = trim($data);
+        } else {
+            return '';
+        }
+        if (strpos($detail, '<') === 0) {
+            return '';
+        }
+        return strlen($detail) > 200 ? substr($detail, 0, 200) . '...' : $detail;
     }
 }

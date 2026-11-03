@@ -10,14 +10,11 @@ use Pantheon\TerminusGCDN\Commands\VerifyCommand;
  */
 final class TestVerifyCommand extends VerifyCommand
 {
-    /** @var array<string, string> host => CNAME target */
-    public array $cnames = [];
+    /** @var array<string, array<string, string[]>> type => host => values; absent = lookup failed */
+    public array $records = [];
 
-    /** @var array<string, string[]> host => addresses */
-    public array $addresses = [];
-
-    /** @var string[] every host looked up */
-    public array $lookups = [];
+    /** @var string[] "TYPE host" for every record lookup */
+    public array $recordLookups = [];
 
     /** The fixtures' observed_at (2026-10-11T18:04:05Z). */
     public const OBSERVED_AT = 1791741845;
@@ -25,16 +22,10 @@ final class TestVerifyCommand extends VerifyCommand
     /** An hour after the fixtures' observed_at. */
     public int $clock = self::OBSERVED_AT + 3600;
 
-    protected function lookupCname(string $host): ?string
+    protected function lookupRecords(string $host, string $type): ?array
     {
-        $this->lookups[] = $host;
-        return $this->cnames[$host] ?? null;
-    }
-
-    protected function lookupAddresses(string $host): array
-    {
-        $this->lookups[] = $host;
-        return $this->addresses[$host] ?? [];
+        $this->recordLookups[] = "{$type} {$host}";
+        return $this->records[$type][$host] ?? null;
     }
 
     protected function now(): int

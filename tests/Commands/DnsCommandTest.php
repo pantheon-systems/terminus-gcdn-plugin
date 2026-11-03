@@ -39,8 +39,11 @@ final class DnsCommandTest extends CommandHarness
             'active, keys absent' => [F::ACTIVE, false, 'Cloudflare: ownership and certificate active', true],
             'ready' => [F::READY, true, 'Cloudflare: DNS records ready (confirmed by Pantheon)', true],
             'ready, keys absent (before #318)' => [F::READY, false, 'Cloudflare: ownership and certificate pending', false],
-            'candidate' => [F::CANDIDATE, true, 'Cloudflare: ownership not confirmed yet (served through Cloudflare today)', false],
-            'zone hold' => [F::ZONE_HOLD, true, 'held zone. Contact Pantheon support.', false],
+            'ready, moved' => [F::READY_MOVED, true, 'To restart the checks, run "terminus gcdn:verify my-site.live moved.example.com".', true],
+            'ready, deleted' => [F::DELETED, true, 'A recheck restores it: run "terminus gcdn:verify my-site.live deleted.example.com".', true],
+            'ready, moved, cert lost' => [F::READY_MOVED_CERT_LOST, true, 'Cloudflare: ownership not confirmed yet', false],
+            'candidate' => [F::CANDIDATE, true, 'Cloudflare: ownership not confirmed yet', false],
+            'zone hold' => [F::ZONE_HOLD, true, 'Cloudflare reports a zone hold on this domain.', false],
             'cdn both' => [F::CDN_BOTH, true, 'Cloudflare: ownership and certificate pending', false],
             'platform' => [F::PLATFORM, true, 'Managed by Pantheon: no DNS records or verification needed.', true],
             'fastly' => [F::FASTLY, true, 'Not on GCDN (Cloudflare).', true],
@@ -58,7 +61,7 @@ final class DnsCommandTest extends CommandHarness
         $this->assertStringContainsString($headline, $out);
         $this->assertStringNotContainsString('cert-token-', $out, 'P5: never the cert TXT');
         if (!$ready) {
-            $this->assertStringContainsString("Not ready yet: {$domain->id}.", $out);
+            $this->assertStringContainsString("Not ready to switch DNS yet: {$domain->id}.", $out);
         }
     }
 
@@ -69,7 +72,7 @@ final class DnsCommandTest extends CommandHarness
         $this->assertStringContainsString('=== my-site site on live environment hostname dns records ===', $out);
         $this->assertStringContainsString("active.example.com\n------", $out);
         $this->assertStringContainsString("fastly.example.com\n------", $out);
-        $this->assertStringContainsString('Not ready yet: pending.example.com.', $out);
+        $this->assertStringContainsString('Not ready to switch DNS yet: pending.example.com.', $out);
         $this->assertStringContainsString('terminus gcdn:verify my-site.live <domain>', $out);
     }
 
@@ -77,8 +80,8 @@ final class DnsCommandTest extends CommandHarness
     {
         $this->dns($this->domain(F::READY));
         $out = $this->plain();
-        $this->assertStringContainsString('Name:  _cf-custom-hostname.ready.example.com', $out);
-        $this->assertStringContainsString('Value: ready.example.com.dc5ecddca9c0e249.dcv.cloudflare.com.', $out);
+        $this->assertRow($out, 'TXT', '_cf-custom-hostname.ready.example.com', '0b1c2d3e-own-fd9b5c21', 'None: confirmed by Pantheon. Keep it until the domain is active.');
+        $this->assertRow($out, 'CNAME', '_acme-challenge.ready.example.com', 'ready.example.com.dc5ecddca9c0e249.dcv.cloudflare.com.', 'None.');
         $this->assertStringContainsString('terminus gcdn:verify my-site.live ready.example.com', $out);
     }
 
@@ -91,7 +94,9 @@ final class DnsCommandTest extends CommandHarness
             (object) ['type' => 'AAAA', 'target_value' => '2606:4700::6812:101', 'detected_value' => '2606:4700::6812:101', 'status' => 'okay'],
         ];
         $this->dns($domain);
-        $this->assertStringContainsString('Caution: both the CNAME and the A/AAAA records are set.', $this->plain());
+        $out = $this->plain();
+        $this->assertRow($out, 'Issue: Traffic records', 'Both the CNAME and the A/AAAA records are set.');
+        $this->assertStringContainsString('Keep one option and remove the other.', $out);
     }
 
     public function testMatchingRecordStillActionRequiredSaysPropagating(): void
@@ -99,7 +104,25 @@ final class DnsCommandTest extends CommandHarness
         $domain = $this->domain(F::PENDING);
         $domain->dns_status_details->dns_records[1]->detected_value = '104.18.1.1';
         $this->dns($domain);
-        $this->assertStringContainsString('A: 104.18.1.1 (current: 104.18.1.1) [propagating]', $this->plain());
+        $this->assertRow($this->plain(), 'A', 'pending.example.com', '104.18.1.1', 'None: set. Waiting for DNS to propagate.');
+    }
+
+    public function testActionRequiredHasItsOwnFooterAndExitsOne(): void
+    {
+        $this->assertSame(1, $this->dns($this->domain(F::BLOCKED), $this->domain(F::ACTIVE)));
+        $out = $this->plain();
+        $this->assertStringContainsString('Cloudflare: action required (status: blocked)', $out);
+        $this->assertStringContainsString('Action required: blocked.example.com. Contact Pantheon support.', $out);
+        $this->assertStringNotContainsString('Not ready to switch DNS yet', $out);
+    }
+
+    public function testZoneHoldHasItsOwnFooter(): void
+    {
+        $this->assertSame(1, $this->dns($this->domain(F::ZONE_HOLD_BLOCKED), $this->domain(F::ACTIVE)));
+        $out = $this->plain();
+        $this->assertStringContainsString('Zone hold: held-blocked.example.com. The domain owner has to release it in their Cloudflare account,', $out);
+        $this->assertStringContainsString('then run "terminus gcdn:verify my-site.live <domain>".', $out);
+        $this->assertStringNotContainsString('Contact Pantheon support', $out);
     }
 
     public function testNoDomains(): void
@@ -144,7 +167,7 @@ final class DnsCommandTest extends CommandHarness
     {
         $this->dns($this->domain(F::PENDING_CERT));
         $out = $this->plain();
-        $this->assertStringContainsString('Certificate: The certificate authority could not validate', $out);
+        $this->assertRow($out, 'Issue: Certificate', 'The certificate authority could not validate');
         $this->assertStringNotContainsString('_cf-custom-hostname', $out);
     }
 
@@ -153,7 +176,8 @@ final class DnsCommandTest extends CommandHarness
     {
         $this->dns($this->domain(F::PENDING));
         $out = $this->plain();
-        $this->assertStringContainsString('CNAME record — certificate validation (DCV delegation)', $out);
+        $this->assertStringContainsString('2. Certificate (DCV CNAME): not done: add this record', $out);
+        $this->assertRow($out, 'CNAME', '_acme-challenge.pending.example.com', 'pending.example.com.dc5ecddca9c0e249.dcv.cloudflare.com.', 'Add this record. Remove any TXT records with this name first');
         $this->assertStringNotContainsString('cert-token-', $out);
     }
 

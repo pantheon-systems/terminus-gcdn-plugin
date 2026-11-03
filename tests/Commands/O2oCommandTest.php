@@ -32,14 +32,18 @@ final class O2oCommandTest extends CommandHarness
     public static function states(): array
     {
         return [
-            'pending' => [F::PENDING, true, 'Ownership: not confirmed yet.', 1],
-            'pending, keys absent' => [F::PENDING, false, 'Ownership: not confirmed yet.', 1],
-            'active' => [F::ACTIVE, true, 'Done: ownership and certificate active. No TXT record needed.', 0],
-            'ready' => [F::READY, true, 'Ownership: confirmed by Pantheon. Next: switch DNS.', 0],
-            'ready, keys absent (before #318)' => [F::READY, false, 'Ownership: not confirmed yet.', 1],
-            'candidate' => [F::CANDIDATE, true, 'Ownership: not confirmed yet.', 1],
-            'zone hold' => [F::ZONE_HOLD, true, 'held zone. Contact Pantheon support.', 1],
-            'cdn both' => [F::CDN_BOTH, true, 'Ownership: not confirmed yet.', 1],
+            'pending' => [F::PENDING, true, 'Cloudflare: ownership and certificate pending', 1],
+            'pending, keys absent' => [F::PENDING, false, 'Cloudflare: ownership and certificate pending', 1],
+            'active' => [F::ACTIVE, true, 'Cloudflare: ownership and certificate active', 0],
+            'ready' => [F::READY, true, 'Cloudflare: DNS records ready (confirmed by Pantheon)', 0],
+            'ready, keys absent (before #318)' => [F::READY, false, 'Cloudflare: ownership and certificate pending', 1],
+            'ready, moved' => [F::READY_MOVED, true, 'Cloudflare paused its checks on this domain (status: moved)', 0],
+            'blocked' => [F::BLOCKED, true, 'Cloudflare: action required (status: blocked)', 1],
+            'deleted' => [F::DELETED, true, 'Cloudflare marked this domain deleted (status: deleted)', 0],
+            'candidate' => [F::CANDIDATE, true, 'Cloudflare: ownership not confirmed yet', 1],
+            'zone hold' => [F::ZONE_HOLD, true, 'Cloudflare reports a zone hold on this domain.', 1],
+            'zone hold, blocked' => [F::ZONE_HOLD_BLOCKED, true, 'Cloudflare: action required (zone hold, status: blocked)', 1],
+            'cdn both' => [F::CDN_BOTH, true, 'Cloudflare: ownership and certificate pending', 1],
             'cdn blank' => [F::CDN_BLANK, true, 'Status unavailable', 1],
             'challenges missing' => [F::NO_CHALLENGES, true, 'Status not available yet', 1],
         ];
@@ -61,19 +65,28 @@ final class O2oCommandTest extends CommandHarness
         $this->o2o(null, $this->domain(F::PENDING));
         $out = $this->plain();
         $this->assertStringContainsString('pending.example.com  (zone: cfp1c)', $out);
-        $this->assertStringContainsString('Name:  _cf-custom-hostname.pending.example.com', $out);
-        $this->assertStringContainsString('Value: pending.example.com.dc5ecddca9c0e249.dcv.cloudflare.com.', $out);
-        $this->assertStringContainsString('CNAME record — traffic (add it after Pantheon confirms ownership', $out);
-        $this->assertStringContainsString('Value: fe.cfp1c.edge.pantheon.io.', $out);
+        $domain = $this->domain(F::PENDING);
+        $this->assertRow($out, 'TXT', '_cf-custom-hostname.pending.example.com', $domain->challenges->ownership_txt->val, 'Add this record.');
+        $this->assertRow($out, 'CNAME', '_acme-challenge.pending.example.com', 'pending.example.com.dc5ecddca9c0e249.dcv.cloudflare.com.', 'Add this record.');
+        $this->assertStringContainsString('Can\'t use a CNAME with this name? Run gcdn:verify with --cert-txt for a TXT record instead.', $out);
+        $this->assertStringContainsString('3. Switch traffic to Pantheon: not yet: after steps 1 and 2', $out);
+        $this->assertRow($out, 'CNAME', 'pending.example.com', 'fe.cfp1c.edge.pantheon.io', 'Not yet: after the steps above.');
+        // Cloudflare-to-Cloudflare: the proxied CNAME alone, no A/AAAA option.
+        $this->assertRow($out, '(Proxied)');
+        $this->assertStringNotContainsString('Option 2', $out);
+        $this->assertStringNotContainsString('│ A ', $out);
     }
 
     public function testActiveKeepsDcvAndTraffic(): void
     {
         $this->o2o(null, $this->domain(F::ACTIVE));
         $out = $this->plain();
-        $this->assertStringContainsString('Keep this record permanently', $out);
-        $this->assertStringContainsString('CNAME record — traffic (in place)', $out);
+        $this->assertStringContainsString('If you use another proxy in front of Pantheon (Cloudflare or otherwise), keep this record in place: without it, your certificate can fail to renew.', $out);
+        $this->assertStringContainsString('If you don\'t, we still recommend keeping it: it\'s extra insurance that nothing can interfere with certificate renewals.', $out);
+        $this->assertStringContainsString('3. Switch traffic to Pantheon: done', $out);
+        $this->assertRow($out, 'CNAME', 'active.example.com', 'fe.cfp1c.edge.pantheon.io', 'None: points to Pantheon.');
         $this->assertStringNotContainsString('_cf-custom-hostname', $out);
+        $this->assertStringNotContainsString('--cert-txt', $out, 'not once the certificate is active');
     }
 
     /** P8: once ready, the traffic step is open, with the cutover options. */
@@ -81,10 +94,16 @@ final class O2oCommandTest extends CommandHarness
     {
         $this->o2o(null, $this->domain(F::READY));
         $out = $this->plain();
-        $this->assertStringContainsString('CNAME record — traffic (switch to it when you\'re ready)', $out);
-        $this->assertStringContainsString('Turning proxying off for this', $out);
-        $this->assertStringContainsString('Name:  cf-dns-verify.ready.example.com', $out);
-        $this->assertStringContainsString('terminus gcdn:verify my-site.live ready.example.com', $out);
+        $this->assertStringContainsString('3. Switch traffic to Pantheon: not done: switch whenever you\'re ready', $out);
+        $this->assertRow($out, 'CNAME', 'ready.example.com', 'fe.cfp1c.edge.pantheon.io', 'Add it, Proxied.');
+        $this->assertStringContainsString('See "Issues and Notes" in step 1.', $out);
+        $this->assertRow($out, 'Issue: Ownership');
+        $this->assertStringContainsString('The hostname is using Cloudflare', $out);
+        $this->assertRow($out, 'What can be done');
+        $this->assertStringNotContainsString('Potential issues detected', $out);
+        $this->assertStringNotContainsString('cf-dns-verify', $out);
+        $this->assertStringContainsString('│ After you switch DNS, wait about 5 minutes for it to propagate', $out);
+        $this->assertRow($out, 'terminus gcdn:verify my-site.live ready.example.com');
         $this->assertStringNotContainsString('after ownership is verified', $out);
     }
 
@@ -124,7 +143,7 @@ final class O2oCommandTest extends CommandHarness
         $domain = $this->domain(F::PENDING);
         $domain->challenges->dcv_delegation->val = 'pending.example.com.fedcba9876543210.dcv.cloudflare.com';
         $this->o2o(null, $domain);
-        $this->assertStringContainsString('Value: pending.example.com.fedcba9876543210.dcv.cloudflare.com.', $this->plain());
+        $this->assertStringContainsString(' pending.example.com.fedcba9876543210.dcv.cloudflare.com. ', $this->plain());
     }
 
     /** P9: an unknown zone gets customer-safe text. */
@@ -144,7 +163,7 @@ final class O2oCommandTest extends CommandHarness
         $out = $this->plain();
         $this->assertStringContainsString("nozone.example.com\n------", $out);
         $this->assertStringNotContainsString('nozone.example.com.dc5ecddca9c0e249', $out);
-        $this->assertStringContainsString('Traffic record: couldn\'t determine the target.', $out);
+        $this->assertRow($out, 'Issue: Traffic record', 'Pantheon couldn\'t determine the traffic target for this domain.');
     }
 
     /** P11: no invalid wildcard DCV target. */

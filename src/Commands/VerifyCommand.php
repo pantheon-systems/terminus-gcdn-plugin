@@ -29,12 +29,20 @@ class VerifyCommand extends TerminusCommand implements SiteAwareInterface, Reque
     use RequestAwareTrait;
     use DomainOutputTrait;
 
-    /** Seconds before this machine rechecks the same hostname again. */
-    const RECHECK_COOLDOWN = 60;
+    /**
+     * Seconds before this machine rechecks the same hostname again. Pantheon
+     * takes up to about 10 minutes to see a recheck's result, so a second one
+     * sooner adds nothing. A run within it shows the latest poll and when a
+     * force recheck can run, with no writes, as with --no-recheck.
+     */
+    const RECHECK_COOLDOWN = 300;
 
     const RECHECK_CACHE_FILE = 'gcdn-recheck.json';
 
     const METHOD_TO_API = ['dns' => 'txt', 'http' => 'http'];
+
+    /** --cert-txt: step 2 is the raw `_acme-challenge` TXT, not the DCV CNAME. */
+    private bool $certTxt = false;
 
     /**
      * Rechecks a GCDN domain and shows its status and DNS records.
@@ -42,7 +50,9 @@ class VerifyCommand extends TerminusCommand implements SiteAwareInterface, Reque
      * For a GCDN custom domain that isn't active yet, this asks Cloudflare to
      * check it again now (like Force Recheck in the dashboard). Pantheon sees
      * the result within about 10 minutes; run the command again to see it.
-     * A domain is rechecked at most once a minute from this machine.
+     * A domain is rechecked at most every 5 minutes from this machine (a run
+     * sooner shows the latest poll, as with --no-recheck), and only once a
+     * record Cloudflare checks is in DNS (--recheck forces it).
      *
      * Exits 0 when the domain is active or its DNS records are ready, and 1
      * when it isn't ready, isn't found, or its status is unavailable.
@@ -55,6 +65,8 @@ class VerifyCommand extends TerminusCommand implements SiteAwareInterface, Reque
      * @param string $domain Domain e.g. `example.com`
      * @option method Switch certificate validation to dns or http as part of the recheck
      * @option no-recheck Only show the status: no recheck and no other changes
+     * @option recheck Recheck even within the cooldown or before the records are in DNS
+     * @option cert-txt Show the _acme-challenge TXT record for step 2 instead of the DCV CNAME, for DNS that can't take the CNAME
      *
      * @usage <site>.<env> <domain_name> Rechecks <domain_name> and shows its status and DNS records.
      * @usage <site>.<env> <domain_name> --no-recheck Shows the status without a recheck.
@@ -62,11 +74,12 @@ class VerifyCommand extends TerminusCommand implements SiteAwareInterface, Reque
      *
      * @throws \Pantheon\Terminus\Exceptions\TerminusException
      */
-    public function verify($site_env, $domain, $options = ['method' => null, 'no-recheck' => false])
+    public function verify($site_env, $domain, $options = ['method' => null, 'no-recheck' => false, 'recheck' => false, 'cert-txt' => false])
     {
         $env = $this->getEnv($site_env);
         $site = $this->getSiteById($site_env);
         $siteEnv = $site->getName() . '.' . $env->getName();
+        $this->certTxt = !empty($options['cert-txt']);
 
         $apiMethod = null;
         if (!empty($options['method'])) {
@@ -111,16 +124,34 @@ class VerifyCommand extends TerminusCommand implements SiteAwareInterface, Reque
 
         // Writes, for GCDN custom domains only (P1): the recheck, then the
         // verify-ownership POST that lets titan complete an active domain.
-        // --no-recheck makes no writes at all.
+        // --no-recheck makes no writes at all, and neither does a status a
+        // recheck can't fix (blocked, being deleted, ...). A zone hold is the
+        // exception: once the owner releases it, the recheck is the fix.
+        $found = $this->lookUpStepRecords($state);
+        $rechecked = false;
         if (!empty($options['no-recheck'])) {
-            $this->line('Recheck skipped (--no-recheck).' . ($apiMethod !== null ? ' --method was not applied.' : ''));
+            $this->line('Force recheck skipped (--no-recheck).' . ($apiMethod !== null ? ' --method was not applied.' : ''));
+        } elseif ($state->actionRequired() && !$state->zoneHold()) {
+            $this->line("Force recheck skipped: a recheck can't fix Cloudflare status \"{$state->cloudflareStatus()}\".");
+        } elseif ($state->actionRequired()) {
+            if ($apiMethod !== null) {
+                $this->log()->notice('--method doesn\'t apply while a zone hold blocks the domain; ignored.');
+            }
+            $rechecked = (bool) $this->recheck($site, $env, $state, null, $found, !empty($options['recheck']));
         } else {
-            $this->recheck($site, $env, $state, $apiMethod);
-            $this->notifyVerifyOwnership($site, $env, $domain);
+            $rechecked = $this->recheck($site, $env, $state, $apiMethod, $found, !empty($options['recheck']));
+            // null: within the cooldown, so this run is a --no-recheck one.
+            if ($rechecked !== null) {
+                $this->notifyVerifyOwnership($site, $env, $domain);
+            }
+            $rechecked = (bool) $rechecked;
         }
-        $this->line('');
+        // An active domain gets no recheck line, so no gap either.
+        if (!$state->active() || !empty($options['no-recheck']) || $apiMethod !== null) {
+            $this->line('');
+        }
 
-        return $this->renderCloudflare($state, $siteEnv, $domains);
+        return $this->renderCloudflare($state, $siteEnv, $rechecked, $found);
     }
 
     /**
@@ -174,96 +205,59 @@ class VerifyCommand extends TerminusCommand implements SiteAwareInterface, Reque
         }
     }
 
-    private function renderCloudflare(ChallengeState $state, string $siteEnv, array $domains): int
+    private function renderCloudflare(ChallengeState $state, string $siteEnv, bool $rechecked, array $found): int
     {
-        $domain = $state->hostname();
-
-        switch ($state->state()) {
-            case ChallengeState::ACTIVE:
-                $this->line('Cloudflare: ' . $this->paint('ownership and certificate active', 'green'));
-                $this->line('DNS: ' . ($state->dnsConfigured()
-                    ? $this->paint('pointed to Pantheon', 'green')
-                    : $this->paint('not pointed to Pantheon yet', 'yellow')));
-                $this->line('');
-                $this->writeTrafficRecords($state);
-                $this->line('');
-                $this->writeDcv($state);
-                $this->line('');
-                return 0;
-
-            case ChallengeState::READY:
-                $this->line('Cloudflare: ' . $this->paint('DNS records ready (confirmed by Pantheon)', 'green'));
-                $this->writeCloudflareStatus($state);
-                $this->writeZoneHold($state);
-                $this->line('');
-                $this->writeOwnershipTxt($state, 'keep it until the domain is active');
-                $this->line('');
-                $this->writeDcv($state);
-                $this->line('');
-                $this->writeTrafficRecords($state);
-                $this->line('');
-                $this->writeCutoverMessage($state, $siteEnv);
-                $this->writeWwwWarning($domain, $domains);
-                $this->line('');
-                return 0;
-
-            case ChallengeState::CANDIDATE:
-                $this->line('Cloudflare: ' . $this->paint('ownership not confirmed yet', 'red'));
-                $this->writeCloudflareStatus($state);
-                $this->writeZoneHold($state);
-                $this->line('This domain is served through Cloudflare today (your own Cloudflare account or your current');
-                $this->line('host), so Pantheon confirms ownership through the TXT record below. Add it and the CNAME,');
-                $this->line('then run this command again.');
-                $this->line('');
-                $this->writeOwnershipTxt($state, 'add this');
-                $this->line('');
-                $this->writeDcv($state);
-                $this->line('');
-                $this->line($this->paint('Don\'t switch DNS yet: Pantheon hasn\'t confirmed ownership. These are the records to switch to later:', 'yellow'));
-                $this->writeTrafficRecords($state);
-                $this->line('');
-                $this->writeErrors($state);
-                $this->line("For the full Cloudflare-to-Cloudflare steps, run \"terminus gcdn:o2o {$siteEnv} {$domain}\".");
-                $this->line('');
-                return 1;
-
-            default:
-                if ($state->ownershipDoneCertPending()) {
-                    $this->line('Cloudflare: ' . $this->paint('ownership verified, certificate pending', 'yellow'));
-                } else {
-                    $this->line('Cloudflare: ' . $this->paint('ownership and certificate pending', 'red'));
-                }
-                $this->writeCloudflareStatus($state);
-                $this->writeZoneHold($state);
-                $this->line('');
-                if (!$state->ownershipDoneCertPending()) {
-                    $this->writeOwnershipTxt($state, 'add this');
-                    $this->line('');
-                }
-                $this->writeDcv($state);
-                $this->line('');
-                $this->line($this->paint('Not ready yet: add the records above, then run this command again. These are the records to switch DNS to:', 'yellow'));
-                $this->writeTrafficRecords($state);
-                $this->line('');
-                $this->writeErrors($state);
-                $this->line("Domain proxied through your own Cloudflare account? Run \"terminus gcdn:o2o {$siteEnv} {$domain}\".");
-                $this->line('');
-                return 1;
+        if ($state->state() === ChallengeState::ACTION_REQUIRED) {
+            $this->writeActionRequired($state, $siteEnv, $rechecked);
+            $this->line('');
+            return 1;
         }
+
+        $this->writeHeadline($state);
+        $this->writeCloudflareStatus($state);
+        $this->writePaused($state, $siteEnv, $rechecked);
+        $this->writeZoneHold($state);
+        if ($state->state() === ChallengeState::CANDIDATE) {
+            $this->line('This domain is served through Cloudflare today (your own Cloudflare account or your current');
+            $this->line('host), so Pantheon confirms ownership through the step 1 TXT record.');
+        }
+        if ($state->state() === ChallengeState::READY) {
+            $this->writeConfirmedDespiteErrors($state, 'See "Issues and Notes" in step 1.');
+        }
+        $this->line('');
+        // Cloudflare's errors, what can be done and the cutover run are in the step tables.
+        $this->writeSteps($state, '', $found, $this->certTxt, $siteEnv);
+        $this->line('');
+        if ($state->state() !== ChallengeState::READY) {
+            $this->writeNext($state, $siteEnv, $rechecked);
+            if ($state->state() === ChallengeState::CANDIDATE) {
+                $this->line("For the full Cloudflare-to-Cloudflare steps, run \"terminus gcdn:o2o {$siteEnv} {$state->hostname()}\".");
+            } elseif ($state->state() === ChallengeState::PENDING && !$state->ownershipDoneCertPending()) {
+                $this->line("Domain proxied through your own Cloudflare account? Run \"terminus gcdn:o2o {$siteEnv} {$state->hostname()}\".");
+            }
+            $this->line('');
+        }
+        return in_array($state->state(), [ChallengeState::ACTIVE, ChallengeState::READY], true) ? 0 : 1;
     }
 
     /**
      * Sends the Force Recheck PATCH (`{}`, or `{verify_method}`) unless the
      * domain is active or a recheck just happened. A method change isn't
      * held back by the cooldown.
+     *
+     * @param array $found The step records in DNS (lookUpStepRecords()).
+     * @param bool $force --recheck: skip the cooldown and the record check.
+     *
+     * @return bool|null Whether this run asked Cloudflare to check again, or
+     *   null within the cooldown: no writes at all, as with --no-recheck.
      */
-    private function recheck($site, $env, ChallengeState $state, ?string $apiMethod): void
+    private function recheck($site, $env, ChallengeState $state, ?string $apiMethod, array $found, bool $force): ?bool
     {
         if ($state->active()) {
             if ($apiMethod !== null) {
                 $this->line('The domain is already active; the validation method was not changed.');
             }
-            return;
+            return false;
         }
 
         $currentMethod = $state->verifyMethod();
@@ -282,11 +276,17 @@ class VerifyCommand extends TerminusCommand implements SiteAwareInterface, Reque
 
         $hostname = $state->hostname();
         $isMethodChange = isset($body->verify_method);
-        if (!$isMethodChange) {
-            $skip = $this->recheckSkipReason($site, $env, $state);
-            if ($skip !== null) {
-                $this->line("Recheck skipped: {$skip}. Showing the current status.");
-                return;
+        if (!$isMethodChange && !$force) {
+            $missing = $this->nothingToCheck($state, $found);
+            if ($missing !== null) {
+                $this->line("Force recheck skipped: {$missing}, so there's nothing new to check. To force one anyway, use --recheck.");
+                return false;
+            }
+            $wait = $this->recheckWait($site, $env, $state);
+            if ($wait !== null) {
+                $this->line('Showing the latest poll: a force recheck ran from this machine less than 5 minutes ago.');
+                $this->line('A force recheck can be run in ' . $this->duration($wait) . '. To run one now anyway, use --recheck.');
+                return null;
             }
         }
 
@@ -300,19 +300,114 @@ class VerifyCommand extends TerminusCommand implements SiteAwareInterface, Reque
 
         if ($failed !== null) {
             $this->log()->warning('Recheck request failed ({reason}). Showing the current status.', ['reason' => $failed]);
-            return;
+            return false;
         }
 
         $this->rememberRecheck($site, $env, $hostname);
         if ($isMethodChange) {
             $this->line('Validation method switched to ' . ($body->verify_method === 'http' ? 'HTTP' : 'DNS') . '.');
         }
-        $this->line('Recheck requested: Cloudflare checks the domain again now, and Pantheon sees the result');
-        $this->line('within about 10 minutes. Run this command again to see it.');
+        $this->line('Force recheck running: Cloudflare checks the domain again now. If you run this command again');
+        $this->line('in the next 5 minutes, it shows the latest poll.');
+        return true;
     }
 
     /**
-     * Why a `{}` recheck is held back right now, or null.
+     * Why a `{}` recheck can't help yet, or null when it can.
+     *
+     * Cloudflare (or Pantheon, for a domain served through Cloudflare) only
+     * checks records, so a recheck before any of them is in DNS only restarts
+     * policy-docs' polling: about 140 Cloudflare calls over two hours, from
+     * an account-wide budget. A failed lookup counts as in place.
+     */
+    private function nothingToCheck(ChallengeState $state, array $found): ?string
+    {
+        // moved or deleted: the recheck is what restores it. Ready: the
+        // switch happens behind the customer's own Cloudflare proxy, where
+        // DNS can't see it. Zone hold: releasing it changes nothing in DNS.
+        if ($state->paused() || $state->ready() || $state->zoneHold()) {
+            return null;
+        }
+        if ($state->ownershipDoneCertPending() && $this->certTxt) {
+            return $this->inDns($found['dcvTxt'] ?? null, $state->certTxt()['value'] ?? null) === false
+                ? 'the step 2 TXT record isn\'t in DNS with the value shown yet'
+                : null;
+        }
+        if ($state->ownershipDoneCertPending()) {
+            return $this->inDns($found['dcv'] ?? null, $state->dcv()['value'] ?? null) === false
+                ? 'the step 2 CNAME isn\'t in DNS with the value shown yet'
+                : null;
+        }
+        if ($this->inDns($found['txt'] ?? null, $state->ownershipTxt()['value'] ?? null) !== false) {
+            return null;
+        }
+        if (!$state->candidate() && $this->trafficInDns($state) !== false) {
+            return null;
+        }
+        return 'the step 1 TXT record isn\'t in DNS with the value shown yet';
+    }
+
+    /**
+     * The step 1 TXT and step 2 CNAME as DNS has them, while those steps
+     * aren't done: ['txt' => string[]|null, 'dcv' => string[]|null,
+     * 'dcvTxt' => string[]|null]. dcvTxt: TXT records at the DCV name,
+     * which conflict with the CNAME; looked up only when there's no CNAME.
+     * Once steps 1 and 2 are done, only 'dcv'.
+     */
+    private function lookUpStepRecords(ChallengeState $state): array
+    {
+        if (!$state->isCustomCloudflare() || $state->actionRequired()) {
+            return [];
+        }
+        // Done (active or ready): only the DCV CNAME, for the renewal advice.
+        // A CNAME lookup returns quickly even for a missing name.
+        if ($state->active() || $state->ready()) {
+            $dcv = $state->dcv();
+            return $dcv !== null ? ['dcv' => $this->lookupRecords($dcv['name'], 'CNAME')] : [];
+        }
+        $found = [];
+        $txt = $state->ownershipTxt();
+        if ($txt !== null && !$state->ownershipDoneCertPending()) {
+            $found['txt'] = $this->lookupRecords($txt['name'], 'TXT');
+        }
+        $dcv = $state->dcv();
+        if ($dcv !== null) {
+            $found['dcv'] = $this->lookupRecords($dcv['name'], 'CNAME');
+            if ($found['dcv'] === []) {
+                $found['dcvTxt'] = $this->lookupRecords($dcv['name'], 'TXT');
+            }
+        }
+        return $found;
+    }
+
+    /** Whether DNS has $expected, or null when unknown. */
+    private function inDns(?array $values, ?string $expected): ?bool
+    {
+        if ($values === null || $expected === null) {
+            return null;
+        }
+        $normalize = fn(string $v) => strtolower(rtrim(trim($v, " \"\t"), '.'));
+        return in_array($normalize($expected), array_map($normalize, $values), true);
+    }
+
+    /** Whether the domain already points to Pantheon, or null when unknown. */
+    private function trafficInDns(ChallengeState $state): ?bool
+    {
+        $target = $state->trafficTarget();
+        $cnames = $this->lookupRecords($state->hostname(), 'CNAME');
+        if ($target !== null && $this->inDns($cnames, $target)) {
+            return true;
+        }
+        $expected = array_column(array_filter($state->dnsRecords(), fn($r) => $r['type'] === 'A'), 'value');
+        $addresses = $this->lookupRecords($state->hostname(), 'A');
+        if ($cnames === null || $addresses === null) {
+            return null;
+        }
+        return array_intersect($expected, $addresses) !== [];
+    }
+
+    /**
+     * Seconds until a `{}` recheck may run again, or null when it may now.
      *
      * Only this machine's own last recheck counts. A recent Cloudflare status
      * read (`cloudflare_status_observed_at`) doesn't: a poll only reads the
@@ -320,14 +415,26 @@ class VerifyCommand extends TerminusCommand implements SiteAwareInterface, Reque
      * every PATCH restarts policy-docs' 10-30 second polling, so that time is
      * nearly always recent right after a domain is added or rechecked.
      */
-    private function recheckSkipReason($site, $env, ChallengeState $state): ?string
+    private function recheckWait($site, $env, ChallengeState $state): ?int
     {
         $now = $this->now();
         $last = $this->readRecheckCache()[$this->recheckKey($site, $env, $state->hostname())] ?? null;
         if (is_int($last) && $now - $last >= 0 && $now - $last < self::RECHECK_COOLDOWN) {
-            return sprintf('one was requested from this machine %d seconds ago', $now - $last);
+            return self::RECHECK_COOLDOWN - ($now - $last);
         }
         return null;
+    }
+
+    /** "4 minutes 30 seconds", "1 minute", "45 seconds". */
+    private function duration(int $seconds): string
+    {
+        $parts = [];
+        foreach ([[intdiv($seconds, 60), 'minute'], [$seconds % 60, 'second']] as [$count, $unit]) {
+            if ($count > 0) {
+                $parts[] = $count . ' ' . $unit . ($count === 1 ? '' : 's');
+            }
+        }
+        return implode(' ', $parts);
     }
 
     /**
@@ -354,56 +461,20 @@ class VerifyCommand extends TerminusCommand implements SiteAwareInterface, Reque
     }
 
     /**
-     * Warns when www.<domain> follows the apex (a CNAME to it, or the same
-     * addresses) but isn't a domain on this environment: switching the apex
-     * would send www to Pantheon too.
-     */
-    private function writeWwwWarning(string $domain, array $domains): void
-    {
-        if (stripos($domain, 'www.') === 0 || strpos($domain, '*') !== false) {
-            return;
-        }
-        $www = 'www.' . $domain;
-        if ($this->findDomain($domains, $www) !== null) {
-            return;
-        }
-
-        $cname = $this->lookupCname($www);
-        $follows = $cname !== null && strcasecmp(rtrim($cname, '.'), $domain) === 0;
-        if (!$follows) {
-            $wwwAddresses = $this->lookupAddresses($www);
-            $follows = $wwwAddresses !== [] && $wwwAddresses === $this->lookupAddresses($domain);
-        }
-        if ($follows) {
-            $this->line('');
-            $this->line($this->paint(
-                "www.{$domain} follows your root domain, so it moves to Pantheon when you switch DNS. Add www.{$domain} to this site too.",
-                'yellow'
-            ));
-        }
-    }
-
-    /** A seam for tests: the CNAME target of a hostname, or null. */
-    protected function lookupCname(string $host): ?string
-    {
-        $records = @dns_get_record($host, DNS_CNAME);
-        return is_array($records) && isset($records[0]['target']) ? (string) $records[0]['target'] : null;
-    }
-
-    /**
-     * A seam for tests: a hostname's sorted A and AAAA addresses.
+     * A seam for tests: the values of a hostname's TXT, CNAME or A records
+     * ([] when there are none), or null when the lookup failed.
      *
-     * @return string[]
+     * @return string[]|null
      */
-    protected function lookupAddresses(string $host): array
+    protected function lookupRecords(string $host, string $type): ?array
     {
-        $records = @dns_get_record($host, DNS_A | DNS_AAAA);
+        $types = ['TXT' => DNS_TXT, 'CNAME' => DNS_CNAME, 'A' => DNS_A];
+        $keys = ['TXT' => 'txt', 'CNAME' => 'target', 'A' => 'ip'];
+        $records = @dns_get_record($host, $types[$type]);
         if (!is_array($records)) {
-            return [];
+            return null;
         }
-        $addresses = array_filter(array_map(fn($r) => $r['ip'] ?? $r['ipv6'] ?? null, $records));
-        sort($addresses);
-        return array_values($addresses);
+        return array_values(array_filter(array_map(fn($r) => (string) ($r[$keys[$type]] ?? ''), $records), fn($v) => $v !== ''));
     }
 
     /** A seam for tests. */

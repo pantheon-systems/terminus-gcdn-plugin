@@ -238,6 +238,28 @@ final class ChallengeCommandTest extends CommandHarness
     }
 
     /** P16: a failed toggle exits 1. */
+    public function testActionRequiredIsNeverPatched(): void
+    {
+        $this->assertSame(1, $this->challenge('blocked.example.com', ['method' => 'http'], $this->domain(F::BLOCKED)));
+        $this->assertSame([], $this->writes());
+        $this->assertStringContainsString('Cloudflare: action required (status: blocked)', $this->plain());
+
+        $this->assertSame(0, $this->challenge(null, ['method' => 'http', 'all' => true], $this->domain(F::BLOCKED), $this->domain(F::PENDING)));
+        $this->assertSame(['pending.example.com'], $this->patchedHosts());
+        $out = $this->plain();
+        $this->assertStringContainsString('blocked.example.com — skipped (action required; contact Pantheon support)', $out);
+        $this->assertStringContainsString('Skipped (action required):', $out);
+    }
+
+    public function testZoneHoldIsNeverPatchedAndSaysWhoCanFixIt(): void
+    {
+        $this->assertSame(0, $this->challenge(null, ['method' => 'http', 'all' => true], $this->domain(F::ZONE_HOLD_BLOCKED), $this->domain(F::PENDING)));
+        $this->assertSame(['pending.example.com'], $this->patchedHosts());
+        $out = $this->plain();
+        $this->assertStringContainsString('held-blocked.example.com — skipped (zone hold; the domain owner has to release it in Cloudflare)', $out);
+        $this->assertStringContainsString('Skipped (zone hold):', $out);
+    }
+
     public function testP16FailedToggleExitsOne(): void
     {
         $cmd = new ChallengeCommand();

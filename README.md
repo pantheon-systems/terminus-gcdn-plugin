@@ -33,7 +33,7 @@ terminus gcdn:dns <site>.live
 For each domain this shows its status and the records it needs:
 
 - **TXT `_cf-custom-hostname.<domain>`:** proves you own the domain. You can remove it once the domain is active.
-- **CNAME `_acme-challenge.<domain>`:** lets Cloudflare issue and renew the certificate (DCV delegation). Set it to DNS only (not proxied) and keep it permanently.
+- **CNAME `_acme-challenge.<domain>`:** lets Cloudflare issue and renew the certificate (DCV delegation). Set it to DNS only (not proxied). If you use another proxy in front of Pantheon (Cloudflare or otherwise), keep it in place: without it, your certificate can fail to renew. If you don't, we still recommend keeping it: it's extra insurance that nothing can interfere with certificate renewals. Once steps 1 and 2 are done, `gcdn:verify` checks DNS for it and words this for what it finds.
 - **Traffic records:** the CNAME, or the A/AAAA records, that point the domain to Pantheon.
 
 ### 3. Add the TXT and `_acme-challenge` CNAME records
@@ -47,13 +47,19 @@ terminus gcdn:verify <site>.live example.com
 terminus gcdn:verify <site>.live www.example.com
 ```
 
-`gcdn:verify` asks Cloudflare to check the domain again now (like **Force Recheck** in the dashboard), then shows its status. Pantheon sees the result within about 10 minutes, so run the command again to see it. A domain is rechecked at most once a minute from your machine, and not at all once it's active. To only show the status, use `--no-recheck`.
+`gcdn:verify` asks Cloudflare to check the domain again now (like **Force Recheck** in the dashboard), then shows its status. Pantheon sees the result within about 10 minutes; run the command again to see it. The command only rechecks once there's something new to check: the ownership TXT or certificate CNAME is in DNS with the value shown, or the domain points to Pantheon. It rechecks a domain at most every 5 minutes from your machine (a run sooner shows the latest poll and how long until a force recheck can run, as with `--no-recheck`), and not at all once it's active. `--recheck` skips both limits. To only show the status, use `--no-recheck`.
+
+The output lists three steps, each red until it's done and green after: 1. ownership (TXT record), 2. certificate (DCV CNAME), 3. switch traffic to Pantheon. `gcdn:verify` also looks up the step 1 and 2 records in DNS and says whether each is found, missing, or set to a different value. For step 2 it also flags TXT records at `_acme-challenge`, which conflict with the CNAME, and a CNAME pointing to another Cloudflare account's validation (the current host's). A "Next:" line says what to do now.
 
 The status is one of:
 
 - **Ownership and certificate active:** done. Point DNS to Pantheon if you haven't yet.
-- **DNS records ready (confirmed by Pantheon):** the domain is served through Cloudflare today (your own Cloudflare account or your current host), and Pantheon has confirmed you own it. The command lists the ways to switch DNS. After you switch, run `gcdn:verify` again.
+- **DNS records ready (confirmed by Pantheon):** the domain is served through Cloudflare today (your own Cloudflare account or your current host), and Pantheon has confirmed you own it. Cloudflare still reports its errors (it can't pre-validate a domain that's already on Cloudflare), so step 1's "Issues and Notes" shows them, with "What can be done" and the ways to switch DNS. Step 3's first row says what to run after you switch: wait about 5 minutes for DNS to propagate and run `gcdn:verify` again (with `--recheck` if you ran it in the last 5 minutes).
 - **Ownership verified, certificate pending**, or **ownership and certificate pending:** add the records shown, then run `gcdn:verify` again.
+- **Action required:** Cloudflare reports a status that adding records can't fix (for example blocked or being deleted). Don't switch DNS; contact Pantheon support. `gcdn:verify` sends no recheck for these domains.
+  - **Zone hold:** the exception. The domain's zone, in the owner's own Cloudflare account, has a zone hold that stops Pantheon from adding the domain. The owner releases it on the domain's Overview page in Cloudflare; then `gcdn:verify` rechecks.
+
+If a domain waits about 11 days for the DNS switch, Cloudflare pauses its checks (status `moved`) and marks the domain `deleted` if it stays paused for 7 more days. The command says so. Running `gcdn:verify` restarts the checks, and restores a deleted domain while Cloudflare still lists it.
 
 To switch certificate validation to HTTP as part of the recheck (not possible while the domain is served through Cloudflare):
 
@@ -61,13 +67,21 @@ To switch certificate validation to HTTP as part of the recheck (not possible wh
 terminus gcdn:verify <site>.live example.com --method=http
 ```
 
+If your DNS can't take the `_acme-challenge` CNAME (for example, that name is already delegated to another provider), show the certificate's TXT record instead:
+
+```
+terminus gcdn:verify <site>.live example.com --cert-txt
+```
+
+The TXT value changes with every certificate order, so add it as shown that day. Once traffic points to Pantheon, Cloudflare renews non-wildcard certificates over HTTP without it. If a renewal needs a TXT again, it has a new value: contact Pantheon Support. The CNAME avoids all of this, so use it when you can.
+
 ### 5. Update your DNS records
 
-Once the domain is ready or active, point it to Pantheon with the CNAME or A/AAAA records shown by `gcdn:dns`.
+Once the domain is ready or active, point it to Pantheon with one of the two options in the step 3 table (`gcdn:verify` or `gcdn:dns`): option 1, the CNAME, or option 2, the A and AAAA records. "In DNS now" shows what DNS returns today. For a domain proxied by Cloudflare, those are Cloudflare's own addresses, not your records, and the status says "behind Cloudflare". In your own Cloudflare account, use option 1 set to Proxied: delete the A and AAAA records for the name first, since Cloudflare won't add a CNAME next to them.
 
 ### Exit codes
 
-`gcdn:verify`, `gcdn:dns` and `gcdn:o2o` exit `0` when every domain they report on is active or ready, and `1` when one isn't ready yet, isn't found, or its status is unavailable. `gcdn:challenge` exits `1` when a toggle fails. Scripts can rely on this since 0.5.0.
+`gcdn:verify`, `gcdn:dns` and `gcdn:o2o` exit `0` when every domain they report on is active or ready, and `1` when one isn't ready yet, needs action, isn't found, or its status is unavailable. `gcdn:challenge` exits `1` when a toggle fails. Scripts can rely on this since 0.5.0.
 
 ## Orange-to-Orange (O2O) migrations
 
@@ -77,7 +91,7 @@ If your domain is already proxied through Cloudflare (your own Cloudflare zone, 
 terminus gcdn:o2o <site>.live
 ```
 
-This prints the per-domain record set to add in the Cloudflare zone that serves the domain today: the hostname ownership TXT record, the DCV delegation CNAME (DNS only / grey cloud, permanent), and the traffic CNAME. The traffic CNAME is ready to switch once Pantheon has confirmed ownership. Pass a domain as a second argument to limit output to one hostname.
+This prints, for each domain, the same three step tables as `gcdn:verify`, to fill in the Cloudflare zone that serves the domain today: the hostname ownership TXT record, the DCV delegation CNAME (DNS only / grey cloud, recommended permanently), and the traffic CNAME, Proxied. Step 3 has only the CNAME: Cloudflare-to-Cloudflare doesn't work with A/AAAA records. The traffic CNAME is ready to switch once Pantheon has confirmed ownership. Unlike `gcdn:verify`, it's read-only: no recheck and no DNS lookups. Pass a domain as a second argument to limit output to one hostname.
 
 ## Certificate challenge method
 

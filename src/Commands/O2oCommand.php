@@ -145,56 +145,30 @@ class O2oCommand extends TerminusCommand implements SiteAwareInterface, RequestA
                 $this->line('');
                 return false;
 
-            case ChallengeState::ACTIVE:
-                $this->line('Done: ' . $this->paint('ownership and certificate active', 'green') . '. No TXT record needed.', $pad);
-                $this->line('', $pad);
-                $this->writeDcv($state, $pad);
-                $this->line('', $pad);
-                $this->writeTrafficCname($state, 'in place', $pad);
-                $this->line('');
-                return true;
-
-            case ChallengeState::READY:
-                $this->line('Ownership: ' . $this->paint('confirmed by Pantheon', 'green') . '. Next: switch DNS.', $pad);
-                $this->writeCloudflareStatus($state, $pad);
-                $this->writeZoneHold($state, $pad);
-                $this->line('', $pad);
-                $this->writeOwnershipTxt($state, 'keep it until the domain is active', $pad);
-                $this->line('', $pad);
-                $this->writeDcv($state, $pad);
-                $this->line('', $pad);
-                // P8: a domain served through Cloudflare can't verify before cutover, so the traffic step opens at ready().
-                $this->writeTrafficCname($state, 'switch to it when you\'re ready', $pad);
-                $this->line('', $pad);
-                $this->writeCutoverMessage($state, $siteEnv, $pad);
-                $this->line('');
-                return true;
-
-            default:
-                $this->line('Ownership: ' . $this->paint('not confirmed yet', 'red') . '.', $pad);
-                $this->writeCloudflareStatus($state, $pad);
-                $this->writeZoneHold($state, $pad);
-                $this->line('', $pad);
-                $this->writeOwnershipTxt($state, 'add this; removable once the domain is active', $pad);
-                $this->line('', $pad);
-                $this->writeDcv($state, $pad);
-                $this->line('', $pad);
-                $this->writeTrafficCname($state, "add it after Pantheon confirms ownership; check with \"terminus gcdn:verify {$siteEnv} {$hostname}\"", $pad);
-                $this->writeErrors($state, $pad);
+            case ChallengeState::ACTION_REQUIRED:
+                $this->writeActionRequired($state, $siteEnv, false, $pad);
                 $this->line('');
                 return false;
-        }
-    }
 
-    private function writeTrafficCname(ChallengeState $state, string $when, string $pad): void
-    {
-        $target = $state->trafficTarget();
-        if ($target === null) {
-            $this->line($this->paint('Traffic record: couldn\'t determine the target. Run "terminus gcdn:dns" for this environment.', 'red'), $pad);
-            return;
+            default:
+                // Active, ready, candidate or pending: the same step tables as gcdn:verify, read-only
+                // (no DNS lookups), with the proxied CNAME alone in step 3.
+                $this->writeHeadline($state, $pad);
+                $this->writeCloudflareStatus($state, $pad);
+                if ($state->state() === ChallengeState::READY) {
+                    $this->writeConfirmedDespiteErrors($state, 'See "Issues and Notes" in step 1.', $pad);
+                }
+                $this->writePaused($state, $siteEnv, false, $pad);
+                $this->writeZoneHold($state, $pad);
+                $this->line('', $pad);
+                $this->writeSteps($state, $pad, [], false, $siteEnv, true);
+                $this->line('');
+                if (!in_array($state->state(), [ChallengeState::ACTIVE, ChallengeState::READY], true)) {
+                    $this->writeNext($state, $siteEnv, false, $pad);
+                    $this->line('');
+                    return false;
+                }
+                return true;
         }
-        $this->line($this->paint('CNAME record — traffic', 'bold') . " ({$when}):", $pad);
-        $this->line("  Name:  {$state->hostname()}", $pad);
-        $this->line("  Value: {$target}.", $pad);
     }
 }

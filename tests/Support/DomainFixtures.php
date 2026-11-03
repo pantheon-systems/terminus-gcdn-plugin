@@ -29,8 +29,13 @@ final class DomainFixtures
     public const ACTIVE = 'active';
     public const ACTIVE_BEFORE_CUTOVER = 'active-before-cutover';
     public const READY = 'ready';
+    public const READY_MOVED = 'ready-moved';
+    public const READY_MOVED_CERT_LOST = 'ready-moved-cert-lost';
+    public const BLOCKED = 'blocked';
+    public const DELETED = 'deleted';
     public const CANDIDATE = 'candidate';
     public const ZONE_HOLD = 'zone-hold';
+    public const ZONE_HOLD_BLOCKED = 'zone-hold-blocked';
     public const PLATFORM = 'platform';
     public const FASTLY = 'fastly';
     public const NO_CHALLENGES = 'no-challenges';

@@ -1,0 +1,9 @@
+# Left out of the package Composer installs for customers (GitHub's zipball
+# honors export-ignore). They stay in the repo for CI and development.
+/tests export-ignore
+/phpunit.xml.dist export-ignore
+/.github export-ignore
+/CODEOWNERS export-ignore
+/catalog-info.yaml export-ignore
+/.gitignore export-ignore
+/.gitattributes export-ignore

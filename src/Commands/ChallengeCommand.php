@@ -32,6 +32,8 @@ class ChallengeCommand extends TerminusCommand implements SiteAwareInterface, Re
     const SKIP_REASONS = [
         'verified' => 'skipped (active)',
         'ready' => 'skipped (DNS records ready)',
+        'action_required' => 'skipped (action required; contact Pantheon support)',
+        'zone_hold' => 'skipped (zone hold; the domain owner has to release it in Cloudflare)',
         'candidate_http' => 'skipped (served through Cloudflare; HTTP validation would be intercepted)',
         'same_method' => null, // "skipped (already DNS|HTTP)"
     ];
@@ -148,6 +150,11 @@ class ChallengeCommand extends TerminusCommand implements SiteAwareInterface, Re
             case ChallengeState::MISSING:
                 $this->line($this->paint('Status not available yet: Pantheon hasn\'t received this domain\'s Cloudflare status. Try again shortly.', 'yellow'));
                 return 1;
+            case ChallengeState::ACTION_REQUIRED:
+                // A method change can't fix a blocked domain.
+                $this->line($this->paint($state->hostname(), 'yellow'));
+                $this->writeActionRequired($state, $site->getName() . '.' . $env->getName());
+                return 1;
         }
 
         $toggled = false;
@@ -198,7 +205,7 @@ class ChallengeCommand extends TerminusCommand implements SiteAwareInterface, Re
         $this->line('Target method: ' . $this->paint(strtoupper($method), 'bold'));
         $this->line('');
 
-        $counts = ['toggled' => 0, 'verified' => 0, 'ready' => 0, 'candidate_http' => 0, 'same_method' => 0, 'errors' => 0];
+        $counts = ['toggled' => 0, 'verified' => 0, 'ready' => 0, 'action_required' => 0, 'zone_hold' => 0, 'candidate_http' => 0, 'same_method' => 0, 'errors' => 0];
         foreach ($eligible as $state) {
             $result = $this->toggleMethod($site, $env, $state, $method);
             if ($result === true) {
@@ -217,6 +224,8 @@ class ChallengeCommand extends TerminusCommand implements SiteAwareInterface, Re
         $labels = [
             'verified' => 'Skipped (active):',
             'ready' => 'Skipped (records ready):',
+            'action_required' => 'Skipped (action required):',
+            'zone_hold' => 'Skipped (zone hold):',
             'candidate_http' => 'Skipped (via Cloudflare):',
             'same_method' => "Skipped (already {$method}):",
         ];
@@ -254,10 +263,12 @@ class ChallengeCommand extends TerminusCommand implements SiteAwareInterface, Re
         $hostname = $state->hostname();
         $requestedApiMethod = self::METHOD_TO_API[$method];
 
-        // P15: never PATCH a domain that's active or ready, and never switch
-        // a domain served through Cloudflare to HTTP.
+        // P15: never PATCH a domain that's active, ready or needs support,
+        // and never switch a domain served through Cloudflare to HTTP.
         if ($state->active()) {
             $reason = 'verified';
+        } elseif ($state->actionRequired()) {
+            $reason = $state->zoneHold() ? 'zone_hold' : 'action_required';
         } elseif ($state->ready()) {
             $reason = 'ready';
         } elseif ($requestedApiMethod === 'http' && $state->candidate()) {
@@ -315,7 +326,7 @@ class ChallengeCommand extends TerminusCommand implements SiteAwareInterface, Re
         if ($state->active()) {
             $this->line('Status: ' . $this->paint('ownership and certificate active', 'green'));
         } elseif ($state->ready()) {
-            $this->line('Status: ' . $this->paint('DNS records ready (confirmed by Pantheon)', 'green'));
+            $this->line('Status: ' . $this->paint('DNS records ready (confirmed by Pantheon)', 'blue'));
         } elseif ($isHttp) {
             $this->line($this->paint(
                 'Domain ownership verification must be completed before HTTP-01 challenges can succeed.',

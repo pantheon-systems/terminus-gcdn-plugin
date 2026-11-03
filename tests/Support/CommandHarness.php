@@ -28,6 +28,13 @@ use Symfony\Component\Console\Output\BufferedOutput;
 abstract class CommandHarness extends TestCase
 {
     public const SITE_ID = '11111111-2222-3333-4444-555555555555';
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+        // Wide enough that no table wraps, unless a test narrows it.
+        putenv('COLUMNS=400');
+    }
     public const DOMAINS_PATH = '#^sites/[^/]+/environments/live/domains\?#';
 
     /** @var array<int, array{0:string,1:string,2:array}> method, path, options */
@@ -158,6 +165,23 @@ abstract class CommandHarness extends TestCase
     protected function plain(): string
     {
         return preg_replace('/\033\[[0-9;]*m/', '', $this->out->fetch());
+    }
+
+    /**
+     * Asserts $out has a table row starting with these cells, in order. A
+     * fourth cell is the record's action: the "Action required" row right
+     * under it must start with it.
+     */
+    protected function assertRow(string $out, string ...$cells): void
+    {
+        $action = count($cells) === 4 ? array_pop($cells) : null;
+        $pattern = '/^ *│ ' . implode(' *│ ', array_map(fn($cell) => preg_quote($cell, '/'), $cells)) . '/mu';
+        $this->assertMatchesRegularExpression($pattern, $out);
+        if ($action !== null) {
+            preg_match($pattern, $out, $match, PREG_OFFSET_CAPTURE);
+            preg_match('/^ *│ Action required *│ (.*?) *│$/mu', substr($out, $match[0][1]), $row);
+            $this->assertStringStartsWith($action, $row[1] ?? '', 'action for ' . implode(' / ', $cells));
+        }
     }
 
     /**

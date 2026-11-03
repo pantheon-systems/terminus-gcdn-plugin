@@ -78,6 +78,8 @@ class DnsCommand extends TerminusCommand implements SiteAwareInterface, RequestA
         ));
 
         $notReady = [];
+        $actionRequired = [];
+        $zoneHold = [];
         foreach ($domains as $domainInfo) {
             if (!is_object($domainInfo) || empty($domainInfo->id)) {
                 continue;
@@ -86,16 +88,28 @@ class DnsCommand extends TerminusCommand implements SiteAwareInterface, RequestA
             $this->renderDomain($state, $domainInfo, $siteEnv);
             if (in_array($state->state(), self::NOT_READY, true)) {
                 $notReady[] = $state->hostname();
+            } elseif ($state->state() === ChallengeState::ACTION_REQUIRED && $state->zoneHold()) {
+                $zoneHold[] = $state->hostname();
+            } elseif ($state->state() === ChallengeState::ACTION_REQUIRED) {
+                $actionRequired[] = $state->hostname();
             }
         }
 
         if ($notReady !== []) {
-            $this->line('Not ready yet: ' . implode(', ', $notReady) . '.');
-            $this->line("Add the records shown, then run \"terminus gcdn:verify {$siteEnv} <domain>\" to recheck.");
+            $this->line('Not ready to switch DNS yet: ' . implode(', ', $notReady) . '.');
+            $this->line("Follow each domain's Next line, then run \"terminus gcdn:verify {$siteEnv} <domain>\" to recheck.");
             $this->line('');
-            return 1;
         }
-        return 0;
+        if ($actionRequired !== []) {
+            $this->line('Action required: ' . implode(', ', $actionRequired) . '. Contact Pantheon support.');
+            $this->line('');
+        }
+        if ($zoneHold !== []) {
+            $this->line('Zone hold: ' . implode(', ', $zoneHold) . '. The domain owner has to release it in their Cloudflare account,');
+            $this->line("then run \"terminus gcdn:verify {$siteEnv} <domain>\".");
+            $this->line('');
+        }
+        return $notReady !== [] || $actionRequired !== [] || $zoneHold !== [] ? 1 : 0;
     }
 
     private function renderDomain(ChallengeState $state, object $domainInfo, string $siteEnv): void
@@ -125,59 +139,23 @@ class DnsCommand extends TerminusCommand implements SiteAwareInterface, RequestA
                 $this->writeTrafficRecords($state, $pad);
                 break;
 
-            case ChallengeState::ACTIVE:
-                $this->line('Cloudflare: ' . $this->paint('ownership and certificate active', 'green'), $pad);
-                $this->line('', $pad);
-                $this->writeTrafficRecords($state, $pad);
-                $this->line('', $pad);
-                $this->writeDcv($state, $pad);
-                break;
-
-            case ChallengeState::READY:
-                $this->line('Cloudflare: ' . $this->paint('DNS records ready (confirmed by Pantheon)', 'green'), $pad);
-                $this->writeCloudflareStatus($state, $pad);
-                $this->writeZoneHold($state, $pad);
-                $this->line('', $pad);
-                $this->writeOwnershipTxt($state, 'keep it until the domain is active', $pad);
-                $this->line('', $pad);
-                $this->writeDcv($state, $pad);
-                $this->line('', $pad);
-                $this->writeTrafficRecords($state, $pad);
-                $this->line('', $pad);
-                $this->line('Served through Cloudflare today. For the ways to switch DNS, run:', $pad);
-                $this->line("  terminus gcdn:verify {$siteEnv} {$state->hostname()}", $pad);
-                break;
-
-            case ChallengeState::CANDIDATE:
-                $this->line('Cloudflare: ' . $this->paint('ownership not confirmed yet', 'red') . ' (served through Cloudflare today)', $pad);
-                $this->writeCloudflareStatus($state, $pad);
-                $this->writeZoneHold($state, $pad);
-                $this->line('', $pad);
-                $this->writeOwnershipTxt($state, 'add this', $pad);
-                $this->line('', $pad);
-                $this->writeDcv($state, $pad);
-                $this->line('', $pad);
-                $this->line($this->paint('Don\'t switch DNS yet: Pantheon hasn\'t confirmed ownership.', 'yellow'), $pad);
-                $this->writeTrafficRecords($state, $pad);
-                $this->writeErrors($state, $pad);
-                $this->line("Cloudflare-to-Cloudflare steps: terminus gcdn:o2o {$siteEnv} {$state->hostname()}", $pad);
+            case ChallengeState::ACTION_REQUIRED:
+                $this->writeActionRequired($state, $siteEnv, false, $pad);
                 break;
 
             default:
-                $this->line('Cloudflare: ' . ($state->ownershipDoneCertPending()
-                    ? $this->paint('ownership verified, certificate pending', 'yellow')
-                    : $this->paint('ownership and certificate pending', 'red')), $pad);
+                $this->writeHeadline($state, $pad);
                 $this->writeCloudflareStatus($state, $pad);
+                $this->writePaused($state, $siteEnv, false, $pad);
                 $this->writeZoneHold($state, $pad);
                 $this->line('', $pad);
-                if (!$state->ownershipDoneCertPending()) {
-                    $this->writeOwnershipTxt($state, 'add this', $pad);
-                    $this->line('', $pad);
-                }
-                $this->writeDcv($state, $pad);
+                $this->writeSteps($state, $pad, [], false, $siteEnv);
                 $this->line('', $pad);
-                $this->writeTrafficRecords($state, $pad);
-                $this->writeErrors($state, $pad);
+                if ($state->state() === ChallengeState::READY) {
+                    $this->line("Next: switch DNS whenever you're ready. For the ways to switch, run: terminus gcdn:verify {$siteEnv} {$state->hostname()}", $pad);
+                } else {
+                    $this->writeNext($state, $siteEnv, false, $pad);
+                }
                 break;
         }
         $this->line('');

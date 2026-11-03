@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.5.1 (2026-11-03)
+
+### Fixed
+
+- **`gcdn:update` now reaches a new minor version.** Terminus records the plugin at install time as `^0.4.0`, which for 0.x versions stops below 0.5.0, so `terminus self:plugin:update` kept 0.4.0 while `gcdn:update` reported "Updated to v0.5.0". It now checks the installed version afterwards (`terminus self:plugin:list`), reinstalls the plugin when the version didn't change, and only reports an update it has confirmed. If the reinstall fails, it puts the previous version back, prints the manual steps, and exits `1`.
+- **A local checkout is left alone:** when the plugin is installed from a path repository or a `dev-` branch, `gcdn:update` doesn't uninstall it.
+
+### Upgrading from 0.4.0 or earlier
+
+Your installed `gcdn:update` still has the old behavior, so reinstall once:
+
+```
+terminus self:plugin:uninstall pantheon-systems/terminus-gcdn-plugin
+terminus self:plugin:install pantheon-systems/terminus-gcdn-plugin
+```
+
+From 0.5.0, `terminus gcdn:update` reaches 0.5.1 (same minor version), and from 0.5.1 on it handles every later version.
+
 ## 0.5.0 (2026-11-03)
 
 Next-gen GCDN readiness (EDRT-9618, EDRT-9789) and User-Agent bypass entries (EDRT-9784).

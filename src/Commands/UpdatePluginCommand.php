@@ -18,7 +18,7 @@ class UpdatePluginCommand extends TerminusCommand
 {
     use DomainOutputTrait;
 
-    const VERSION = '0.5.0-beta.1';
+    const VERSION = '0.5.0';
     const GITHUB_REPO = 'pantheon-systems/terminus-gcdn-plugin';
     const COMPOSER_PACKAGE = 'pantheon-systems/terminus-gcdn-plugin';
 

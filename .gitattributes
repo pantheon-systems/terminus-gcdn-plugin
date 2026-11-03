@@ -3,7 +3,6 @@
 /tests export-ignore
 /phpunit.xml.dist export-ignore
 /.github export-ignore
-/CODEOWNERS export-ignore
 /catalog-info.yaml export-ignore
 /.gitignore export-ignore
 /.gitattributes export-ignore

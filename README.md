@@ -176,7 +176,16 @@ Check for and install the latest version:
 terminus gcdn:update
 ```
 
-This checks the latest release on GitHub and runs the update automatically.
+This checks the latest release on GitHub, updates the plugin, and confirms the installed version. When Terminus can't update it in place (a new minor version, such as 0.5 to 0.6), it reinstalls the plugin. A plugin installed from a local checkout is left alone.
+
+From 0.4.0 or earlier, reinstall once instead, because those versions' `gcdn:update` can't move to a new minor version:
+
+```
+terminus self:plugin:uninstall pantheon-systems/terminus-gcdn-plugin
+terminus self:plugin:install pantheon-systems/terminus-gcdn-plugin
+```
+
+Check the installed version with `terminus self:plugin:list`.
 
 ## Development
 

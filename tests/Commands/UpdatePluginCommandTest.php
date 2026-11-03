@@ -78,16 +78,18 @@ final class UpdatePluginCommandTest extends TestCase
         $this->assertStringContainsString('is up to date (v' . UpdatePluginCommand::VERSION . ')', $this->plain());
     }
 
-    /** The beta isn't offered the older stable release, and is offered the matching stable one. */
-    public function testBetaComparesBelowItsStableRelease(): void
+    /** 0.5.0 isn't offered an older or equal release, and is offered a newer one. */
+    public function testOnlyANewerReleaseIsOffered(): void
     {
-        $this->assertSame('0.5.0-beta.1', UpdatePluginCommand::VERSION);
+        $this->assertSame('0.5.0', UpdatePluginCommand::VERSION);
 
-        $cmd = $this->command([self::RELEASES => self::release('0.4.0')]);
-        $cmd->update();
-        $this->assertSame([], $cmd->ran);
+        foreach (['0.4.0', '0.5.0', 'v0.5.0', '0.5.0-beta.1'] as $tag) {
+            $cmd = $this->command([self::RELEASES => self::release($tag)]);
+            $cmd->update();
+            $this->assertSame([], $cmd->ran, $tag);
+        }
 
-        $cmd = $this->command([self::RELEASES => self::release('0.5.0')]);
+        $cmd = $this->command([self::RELEASES => self::release('0.5.1')]);
         $cmd->update();
         $this->assertCount(1, $cmd->ran);
     }

@@ -1,8 +1,12 @@
 # Changelog
 
-## 0.5.0-beta.1 (unreleased, `next` branch)
+## 0.5.0 (2026-11-03)
 
-Next-gen GCDN readiness (EDRT-9618). A pre-release: `gcdn:update` and Composer's default stability don't install it.
+Next-gen GCDN readiness (EDRT-9618, EDRT-9789) and User-Agent bypass entries (EDRT-9784).
+
+### Added
+
+- **`gcdn:ua-bypass:list`, `gcdn:ua-bypass:add` and `gcdn:ua-bypass:remove`** manage a domain's User-Agent bypass entries: requests whose `User-Agent` exactly equals an entry skip the GCDN bot challenge on that domain, for monitors and tools that can't send a bot-bypass token. Up to 8 entries per domain; browser-like User-Agents need `--allow-browser-ua`. See the README.
 
 ### Changed
 

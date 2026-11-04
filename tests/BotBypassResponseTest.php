@@ -114,6 +114,7 @@ final class BotBypassResponseTest extends TestCase
         $this->assertStringContainsString('x-pantheon-bot-bypass', $lines[0]);
         $this->assertStringContainsString('2026-12-01', $lines[1]);
         $this->assertStringContainsString('2027-03-01', $lines[1]);
+        $this->assertSame(BotBypassResponse::ISSUANCE_NOTICE, $lines[2]);
         $this->assertStringNotContainsString('current-token-value', implode("\n", $lines));
         $this->assertStringNotContainsString('next-token-value', implode("\n", $lines));
     }
@@ -125,5 +126,6 @@ final class BotBypassResponseTest extends TestCase
         $lines = BotBypassResponse::guidance(BotBypassResponse::rows($this->decode($body)));
 
         $this->assertStringContainsString('not available yet', $lines[1]);
+        $this->assertSame(BotBypassResponse::ISSUANCE_NOTICE, $lines[2]);
     }
 }

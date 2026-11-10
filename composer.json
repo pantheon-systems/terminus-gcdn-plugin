@@ -13,7 +13,7 @@
     },
     "require-dev": {
         "pantheon-systems/terminus": "^4",
-        "phpunit/phpunit": "^10.5 || ^11"
+        "phpunit/phpunit": "^13.4.6"
     },
     "extra": {
         "terminus": {
